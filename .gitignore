@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.env.local
+.env.local
+
+# Node
+node_modules/
+dist/
+
+# dbt artifacts
+target/
+dbt_packages/
+logs/
+sample_dbt/
+
+# IDE
+.vscode/
+.idea/
+.codex/
+
+# Generated flows
+apps/api/app/data/flows/*.json
+apps/api/app/data/hybrid_flows/*.json
+
+# Mock data
+artifacts/*
+!artifacts/reference_store
+
+
+# project
+!apps/api/app/data/hybrid_flows/17d74b66.json
+!apps/api/app/data/hybrid_flows/a949b986.json
+!apps/api/app/data/hybrid_flows/f045f825.json
+
+# docs
+docs/*
+!docs/SUMMARY.md
+!docs/ARCHITECTURE.md
+!docs/EPM_INTEGRATION_TESTING_README.md
+
+#config
+config/*
+!config/business_catalog.yaml
+

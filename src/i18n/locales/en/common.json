@@ -1,0 +1,42 @@
+{
+  "languageSwitcher": "Interface language",
+  "russian": "Русский",
+  "english": "English",
+  "help": "Help",
+  "textWidget": {
+    "edit": "Edit",
+    "finishEditing": "Finish editing",
+    "placeholder": "Write Markdown. Use $inline$ or $$block$$ for KaTeX.",
+    "editorLabel": "Text widget content",
+    "empty": "Add a text comment",
+    "titleLabel": "Text widget title",
+    "emptyTitle": "Text widget"
+  },
+  "timeHierarchy": {
+    "switcherLabel": "Time hierarchy level",
+    "levels": {
+      "YEAR": "Year",
+      "HALF_YEAR": "Half-Year",
+      "QUARTER": "Quarter",
+      "MONTH": "Month",
+      "DAY": "Day"
+    }
+  },
+  "pivot": {
+    "dataset": "Dataset",
+    "rows": "Rows",
+    "columns": "Columns",
+    "measures": "Measures",
+    "filters": "Filters",
+    "sorting": "Sorting",
+    "expansion": "Expansion",
+    "formatting": "Formatting",
+    "conditionalFormatting": "Conditional formatting",
+    "dataBars": "Data bars",
+    "heatmap": "Heatmap",
+    "heatmapAutoRange": "Automatic range",
+    "heatmapApplyTo": "Apply to",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all"
+  }
+}

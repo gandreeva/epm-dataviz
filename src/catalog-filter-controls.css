@@ -1,0 +1,80 @@
+.builder-field {
+  grid-template-columns: minmax(0, 1fr) 28px 24px;
+  padding: 0;
+}
+
+.builder-field button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.builder-field-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 14px 26px minmax(0, 1fr);
+  align-items: center;
+  text-align: left;
+  padding: 7px 2px;
+}
+
+.builder-field-main > svg {
+  width: 13px;
+  color: #9ba6aa;
+}
+
+.builder-field-main > span:nth-child(2) {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  background: #e6f2f0;
+  color: #0f8278;
+  font-size: 8px;
+}
+
+.builder-field-main > span.measure {
+  background: #fff0dc;
+  color: #98651d;
+}
+
+.builder-field-main > span:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  padding-left: 6px;
+  min-width: 0;
+}
+
+.builder-field-filter,
+.builder-field-add {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.builder-field-filter svg,
+.builder-field-add svg {
+  width: 13px;
+}
+
+.builder-field-filter {
+  color: #78878c;
+}
+
+.builder-field-filter:hover,
+.builder-field-add:hover {
+  background: #e4efed;
+}
+
+.builder-field-filter.active-filter {
+  background: #0f8278;
+  color: #fff;
+}
+
+.builder-field button:focus-visible {
+  outline: 2px solid #0f8278;
+  outline-offset: 1px;
+}

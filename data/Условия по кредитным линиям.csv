@@ -1,0 +1,5 @@
+fin_version,fin_scenario,fin_doc_num,fin_product,0date,loan,dur_years,spread,loan_reserve_ratio,norev_cl_reserve_ratio,rate,cap_years
+FCT,#,D0001,P1,20250605,15000000000.0,9.0,0.01,0.0633,0.03165,0.189,
+FCT,#,D0002,P1,20250815,1720000000.0,6.0,0.015,0.0321,0.0277,0.189,
+PLN,BASE,D0016,P1,20261001,1500000000.0,2.0,0.01,0.04,0.02,0.1533,
+PLN,BASE,D0017,P1,20261004,10000000000.0,2.0,0.01,0.04,0.02,0.1533,

@@ -1,0 +1,13 @@
+fin_version,fin_scenario,fin_product,rw_loan,rw_norev_credit_line,fin_leverage_loan_ratio,fin_leverage_norev_credit_line_ratio
+FRC,BASE,P5,1.1,0.5,1.0,0.5
+FRC,BASE,P4,1.1,0.5,1.0,0.5
+PLN,#,P1,1.1,0.5,1.0,0.5
+FRC,BASE,P3,1.1,0.5,1.0,0.5
+FRC,BASE,P7,1.1,0.5,1.0,0.5
+FCT,#,P2,1.2,0.6,1.1,0.5
+PLN,BASE,P1,1.1,0.5,1.0,0.5
+FCT,#,P1,1.1,0.5,1.0,0.5
+FRC,BASE,P6,1.1,0.5,1.0,0.5
+FCT,#,P3,1.1,0.5,1.0,0.5
+FRC,BASE,P2,1.2,0.6,1.1,0.5
+FRC,BASE,P1,1.1,0.5,1.0,0.5

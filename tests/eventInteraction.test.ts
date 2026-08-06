@@ -1,0 +1,8 @@
+import test from'node:test';import assert from'node:assert/strict';
+import{clustersAtX,nearestTimePoint,timestampAtX}from'../src/events/eventInteraction';
+import type{ChartEvent,ChartEventCategory,ChartPoint}from'../src/types';
+import type{EventCategoryRow}from'../src/events/eventLayout';
+
+test('pointer x maps to the shared time domain and clamps to its edges',()=>{const domain:[number,number]=[100,300];assert.equal(timestampAtX(50,50,200,domain),100);assert.equal(timestampAtX(150,50,200,domain),200);assert.equal(timestampAtX(300,50,200,domain),300)});
+test('nearest time point prefers the earlier point on equal distance',()=>{const points:ChartPoint[]=[{categoryKey:'a',categoryLabel:'A',timestamp:100},{categoryKey:'b',categoryLabel:'B',timestamp:300}];assert.equal(nearestTimePoint(points,200)?.timestamp,100);assert.equal(nearestTimePoint(points,280)?.timestamp,300)});
+test('event hit detection uses the visible marker tolerance',()=>{const category:ChartEventCategory={key:'loan',label:'Выдача',color:'#000',order:0,visible:true};const event={id:'a',date:'20260101',timestamp:100,title:'A',comment:'',categoryKey:'loan',categoryLabel:'Выдача',color:'#000',unit:'currency',importance:'medium',relatedValue:1,documentId:'D1',version:'FCT',scenario:'#',sourceType:'lifecycle-projection',sourceId:'a'}as ChartEvent;const rows:EventCategoryRow[]=[{category,eventCount:1,clusters:[{id:'loan-100',categoryKey:'loan',timestamp:100,events:[event],showLabel:true}]}];const domain:[number,number]=[100,300];assert.equal(clustersAtX(rows,56,50,200,domain).length,1);assert.equal(clustersAtX(rows,58,50,200,domain).length,0)});

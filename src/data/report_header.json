@@ -1,0 +1,97 @@
+{
+    "headers": [
+        {
+            "value": "0date",
+            "label": "0date",
+            "metadata": {
+                "visible": true,
+                "type": "dimension",
+                "col_type": "select"
+            }
+        },
+        {
+            "value": "total_payment",
+            "label": "total_payment",
+            "metadata": {
+                "visible": true,
+                "type": "measure",
+                "col_type": "number"
+            },
+            "children": [
+                {
+                    "value": "0001",
+                    "label": "0001",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0002",
+                    "label": "0002",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0003",
+                    "label": "0003",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0004",
+                    "label": "0004",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0005",
+                    "label": "0005",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0008",
+                    "label": "0008",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                },
+                {
+                    "value": "0009",
+                    "label": "0009",
+                    "metadata": {
+                        "visible": true,
+                        "type": "dimension",
+                        "analytics_name": "veb_doc_num",
+                        "col_type": "number"
+                    }
+                }
+            ]
+        }
+    ],
+    "values": {},
+    "cache_key": "e04397f2a8061ee70dcdfa3f3cc58618",
+    "is_editable": false
+}

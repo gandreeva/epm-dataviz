@@ -1,0 +1,42 @@
+{
+  "languageSwitcher": "Язык интерфейса",
+  "russian": "Русский",
+  "english": "English",
+  "help": "Подсказка",
+  "textWidget": {
+    "edit": "Редактировать",
+    "finishEditing": "Завершить редактирование",
+    "placeholder": "Введите Markdown. Используйте $формулу$ или $$формулу$$ для KaTeX.",
+    "editorLabel": "Содержимое текстового виджета",
+    "empty": "Добавьте текстовый комментарий",
+    "titleLabel": "Заголовок текстового виджета",
+    "emptyTitle": "Текстовый виджет"
+  },
+  "timeHierarchy": {
+    "switcherLabel": "Уровень временной иерархии",
+    "levels": {
+      "YEAR": "Год",
+      "HALF_YEAR": "Полугодие",
+      "QUARTER": "Квартал",
+      "MONTH": "Месяц",
+      "DAY": "День"
+    }
+  },
+  "pivot": {
+    "dataset": "Dataset",
+    "rows": "Rows",
+    "columns": "Columns",
+    "measures": "Measures",
+    "filters": "Filters",
+    "sorting": "Sorting",
+    "expansion": "Expansion",
+    "formatting": "Formatting",
+    "conditionalFormatting": "Условное форматирование",
+    "dataBars": "Data bars",
+    "heatmap": "Heatmap",
+    "heatmapAutoRange": "Автоматический диапазон",
+    "heatmapApplyTo": "Применять к",
+    "expandAll": "Развернуть всё",
+    "collapseAll": "Свернуть всё"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "options": {
+    "validateCheckpoints": { "label": "Validate checkpoints", "help": "Compares checkpoints with the running calculation and highlights differences." },
+    "connectors": { "label": "Connectors", "help": "Shows links between consecutive waterfall steps." },
+    "valueLabels": { "label": "Value labels", "help": "Shows numeric values directly on the bars." },
+    "runningBalance": { "label": "Running balance", "help": "Shows how the accumulated result changes after each step." },
+    "reconciliation": { "label": "Reconciliation", "help": "Highlights checkpoints and warns about reconciliation differences." },
+    "reconciliationSummary": { "label": "Reconciliation summary", "help": "Shows reported value, calculated value, variance, and validation status." },
+    "warnings": { "label": "Show warnings", "help": "Shows the diagnostic warnings below the chart." },
+    "debug": { "label": "Show debug", "help": "Shows the Waterfall diagnostic table in development mode." }
+  }
+}

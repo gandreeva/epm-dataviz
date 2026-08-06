@@ -1,0 +1,5 @@
+period,metric_key,actual_value,reference_value,reference_type
+202601,operating_expenses,120000000,100000000,PLAN
+202602,operating_expenses,126000000,105000000,PLAN
+202603,operating_expenses,132000000,110000000,PLAN
+202604,operating_expenses,138000000,115000000,PLAN
