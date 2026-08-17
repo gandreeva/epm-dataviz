@@ -8,6 +8,7 @@ export type DatasetId =
   | "financial_reporting"
   | "threshold_finance"
   | "rolling_key_rate"
+  | "multi_mapping_demo"
   | "pnl_waterfall"
   | "writecube_fin_reports";
 export type ChartType =
@@ -41,6 +42,7 @@ export interface FieldSemantic {
   businessObject: string;
   role: string;
   dataType: "string" | "number" | "date";
+  temporalKey?: string;
   granularity?: TimeGranularity;
   inputFormats?: string[];
   outputFormat?: string;
@@ -554,14 +556,24 @@ export interface ChartModel {
   warnings: string[];
 }
 export type PageFilterDefinition =
-  | { fieldId: string; kind: "categorical"; defaultValue: string[]; scope?: { type: "page" | "forecast" | "actual" | "both"; fieldId?: string; forecastFieldId?: string; actualFieldId?: string } }
+  | { fieldId: string; kind: "categorical"; defaultValue: string[]; temporalKey?: string; source?: PageFilterSource; scope?: { type: "page" | "forecast" | "actual" | "both"; fieldId?: string; forecastFieldId?: string; actualFieldId?: string } }
   | {
       fieldId: string;
       kind: "date-range";
       granularity: TimeGranularity;
       defaultValue: { from: string; to: string };
+      temporalKey?: string;
+      source?: PageFilterSource;
       scope?: { type: "page" | "forecast" | "actual" | "both"; fieldId?: string; forecastFieldId?: string; actualFieldId?: string };
     };
+export interface PageFilterSource {
+  datasetId: DatasetId;
+  fieldId: string;
+  semanticRole?: string;
+  dataType?: FieldSemantic["dataType"];
+  temporalKey?: string;
+  granularity?: TimeGranularity;
+}
 export type PageFilterValue = string[] | { from: string; to: string };
 export type PageFilterState = Record<string, PageFilterValue>;
 export type WidgetType = "chart" | "kpi" | "table" | "pivot-table" | "text" | "markdown";

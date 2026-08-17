@@ -39,6 +39,7 @@ const DEFAULT_TEXT_CONTENT = `# Новый комментарий
 Добавьте описание, выводы или формулу.
 
 $E = mc^2$`;
+const isLegacyDashboardParameterFilter = (fieldId: string) => fieldId === "splitDate" || fieldId === "split-date";
 const normalizePivotConfig = (value: unknown): PivotTableConfig | undefined => {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Partial<PivotTableConfig> & { keyFilters?: unknown; sourceFilters?: unknown };
@@ -51,11 +52,33 @@ const normalizePivotConfig = (value: unknown): PivotTableConfig | undefined => {
   const heatmapModes: PivotHeatmapConfig[] = Array.isArray(raw.heatmapModes)
     ? raw.heatmapModes.map((item: any, index) => ({ id: item.id || `heatmap-${index}`, aggregationId: item.aggregationId, enabled: item.enabled !== false, palette: { min: item.palette?.min || "#F1FAFC", max: item.palette?.max || "#0A8FB4" }, range: { mode: "auto" }, applyTo: { detail: item.applyTo?.detail !== false, subtotal: item.applyTo?.subtotal !== false, grandTotal: item.applyTo?.grandTotal !== false } }))
     : [];
+  // Keep every mapped axis dimension. Older dashboard payloads sometimes
+  // omitted these arrays, but they must never be normalized to a single field:
+  // Pivot columns are an ordered multi-level axis.
+  const rows = Array.isArray(raw.rows) ? [...new Set(raw.rows.filter((id): id is string => typeof id === "string"))] : [];
+  const columns = Array.isArray(raw.columns) ? [...new Set(raw.columns.filter((id): id is string => typeof id === "string"))] : [];
   const { keyFilters: _keyFilters, sourceFilters: _sourceFilters, ...rest } = raw;
-  return { ...rest, conditionalFormatting, dataBars, heatmapModes, rowLayout: raw.rowLayout || "compact" } as PivotTableConfig;
+  return { ...rest, rows, columns, conditionalFormatting, dataBars, heatmapModes, rowLayout: raw.rowLayout || "compact" } as PivotTableConfig;
 };
 const normalizePage = (page: BuilderPage): BuilderPage => {
-  const config = page.config;
+  const config = page.config.chartType === "rolling-forecast" && page.config.rollingForecast
+    ? {
+        ...page.config,
+        datasetId: page.config.datasetId,
+        rollingForecast: {
+          ...page.config.rollingForecast,
+          bindings: Object.fromEntries([
+            "observationDateField",
+            "actualValueField",
+            "targetDateField",
+            "forecastValueField",
+            "lowerBoundField",
+            "upperBoundField",
+            "forecastVersionField",
+          ].map((key) => [key, (page.config.rollingForecast?.bindings as Record<string, unknown>)[key] ?? null])) as typeof page.config.rollingForecast.bindings,
+        },
+      }
+    : page.config;
   const widgetId = `${page.id}-chart`;
   const widgets = Array.isArray(page.widgets) && page.widgets.length
     ? page.widgets.map((widget) => {
@@ -74,8 +97,43 @@ const normalizePage = (page: BuilderPage): BuilderPage => {
         };
       })
     : [{ id: widgetId, type: "chart" as const, title: page.label, description: page.description, chartConfig: structuredClone(config), datasetId: config.datasetId, visible: true }];
+  const repairedWidgets = widgets.map((widget) => {
+    const widgetConfig = widget.chartConfig;
+    if (config.datasetId !== "key_rate_scenarios" || !widgetConfig?.viewBy?.includes("period") || widgetConfig.datasetId === "key_rate_scenarios") return widget;
+    const chartType = widget.type === "table" ? "table" as const : widget.type === "kpi" ? "kpi" as const : config.chartType;
+    return { ...widget, chartConfig: { ...structuredClone(config), chartType }, datasetId: config.datasetId };
+  });
+  const synchronizedWaterfallWidgets = repairedWidgets.map((widget) => {
+    if (config.chartType !== "waterfall" || !isConfigurableWidgetForMigration(widget)) return widget;
+    const widgetConfig = widget.chartConfig;
+    if (widgetConfig?.chartType !== "waterfall") return widget;
+    // A persisted page may contain a stale chart widget created before the
+    // page-level dataset/Bridge contract was introduced. Keep per-widget
+    // settings, but repair the source and missing Bridge settings from the
+    // current page config so the P&L preset cannot silently render empty.
+    const candidateWaterfall = widgetConfig.waterfall;
+    const candidateMeasures = candidateWaterfall?.items
+      .filter((item) => item.enabled && item.action !== "exclude")
+      .map((item) => item.measureKey)
+      .filter(Boolean) || [];
+    const candidateIsCompatible = Boolean(
+      candidateWaterfall &&
+      candidateWaterfall.dimensionKey === config.waterfall?.dimensionKey &&
+      candidateMeasures.every((measure) => candidateWaterfall.availableMeasureKeys.includes(measure)),
+    );
+    const nextConfig = {
+      ...structuredClone(config),
+      ...widgetConfig,
+      datasetId: config.datasetId,
+      chartType: "waterfall" as const,
+      waterfall: candidateIsCompatible ? candidateWaterfall : structuredClone(config.waterfall),
+    };
+    return { ...widget, chartConfig: nextConfig, datasetId: nextConfig.datasetId };
+  });
   return {
     ...page,
+    config,
+    pageFilters: (page.pageFilters || []).filter((filter) => !isLegacyDashboardParameterFilter(filter.fieldId)),
     header: page.header
       ? {
           markdown: page.header.markdown || "",
@@ -83,10 +141,16 @@ const normalizePage = (page: BuilderPage): BuilderPage => {
           backgroundColor: page.header.backgroundColor || "transparent",
         }
       : undefined,
-    widgets,
+    widgets: synchronizedWaterfallWidgets,
     layouts: page.layouts || defaultLayouts(widgetId),
   };
 };
+
+// Kept local to migration so the public DashboardWidget type does not need a
+// second, wider predicate just for repair logic.
+function isConfigurableWidgetForMigration(widget: BuilderPage["widgets"][number]): widget is BuilderPage["widgets"][number] & { chartConfig?: BuilderPage["config"] } {
+  return widget.type === "chart" || widget.type === "kpi" || widget.type === "table";
+}
 export const migrateDashboard = (
   value: unknown,
   fallbackPages: BuilderPage[],
@@ -108,6 +172,12 @@ export const migrateDashboard = (
   });
   const withNewSpecializedPages = (pages: BuilderPage[]) => {
     const newPresetIds = new Set([
+      "demo-mapping-column",
+      "demo-mapping-line",
+      "demo-mapping-pie",
+      "demo-mapping-stacked-column",
+      "demo-mapping-combo",
+      "demo-mapping-multi-dimensions",
       "threshold",
       "rolling-forecast",
       "pnl-waterfall",

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import remarkParse from "remark-parse";
@@ -7,6 +7,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeStringify from "rehype-stringify";
 import { unified } from "unified";
 import DOMPurify from "dompurify";
+import { Check, Pencil } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { DashboardWidget, FieldMeta } from "../types";
 import { ui } from "../uiIds";
 
@@ -59,10 +61,26 @@ const expandTemplate = (template: string, context: MarkdownContext, options: { a
 };
 
 export function DynamicMarkdownWidget({ widget, context, fields, editable, onChangeTitle, onChangeConfig, onDrill }: Props) {
+  const { t } = useTranslation("common");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(widget.title || t("textWidget.emptyTitle"));
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const originalTitleRef = useRef(widget.title || t("textWidget.emptyTitle"));
+  const cancelTitleBlurRef = useRef(false);
   const config = widget.markdownConfig || { sourceWidgetId: null, template: "# Markdown\n\nВыберите табличный источник.", enabled: true, maxRows: 100, allowHtml: true, allowCss: true };
   const namespace = `markdown-widget-${widget.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const editorId = `dashboard.widget.${widget.id}.markdown`;
   const rendered = useMemo(() => expandTemplate(config.template, { ...context, rows: context.rows.slice(0, Math.max(1, config.maxRows || 100)) }, { allowHtml: config.allowHtml !== false, allowCss: config.allowCss !== false, namespace }), [config.template, config.maxRows, config.allowHtml, config.allowCss, context, namespace]);
-  return <section {...ui(`dashboard.widget.${widget.id}.markdown`)} className={`dynamic-markdown-widget ${namespace}`} aria-label={widget.title} onClick={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>("[data-markdown-drill-row]"); if (!target || !onDrill) return; const row = context.rows[Number(target.dataset.markdownDrillRow)]; if (row) onDrill(row, target.dataset.markdownDrillValue || ""); }}><header className="text-widget-header"><b>{widget.title}</b>{editable && <button {...ui(`dashboard.widget.${widget.id}.markdown.edit`)} type="button" onClick={() => onChangeTitle(widget.title)} aria-label="Редактировать заголовок">✎</button>}</header>{!config.sourceWidgetId ? <div className="dynamic-markdown-empty">Выберите источник Table или Pivot Table в настройках.</div> : <div {...ui(`dashboard.widget.${widget.id}.markdown.preview`)} className="dynamic-markdown-preview">{rendered.css && <style>{rendered.css}</style>}<div dangerouslySetInnerHTML={{ __html: rendered.html }} /></div>}</section>;
+  const commitTitle = () => {
+    if (cancelTitleBlurRef.current) { cancelTitleBlurRef.current = false; return; }
+    const nextTitle = draftTitle.trim() || widget.title || t("textWidget.emptyTitle");
+    setDraftTitle(nextTitle);
+    onChangeTitle(nextTitle);
+  };
+  const startEditing = () => { setDraftTitle(widget.title || t("textWidget.emptyTitle")); originalTitleRef.current = widget.title || t("textWidget.emptyTitle"); setIsEditingTitle(true); };
+  useEffect(() => { if (isEditingTitle) titleInputRef.current?.focus(); }, [isEditingTitle]);
+  useEffect(() => { if (!isEditingTitle) setDraftTitle(widget.title || t("textWidget.emptyTitle")); }, [isEditingTitle, widget.title, t]);
+  return <section {...ui(editorId)} className={`dynamic-markdown-widget ${namespace}`} aria-label={widget.title} onClick={(event) => { const target = (event.target as HTMLElement).closest<HTMLElement>("[data-markdown-drill-row]"); if (!target || !onDrill) return; const row = context.rows[Number(target.dataset.markdownDrillRow)]; if (row) onDrill(row, target.dataset.markdownDrillValue || ""); }}><header className="text-widget-header">{editable && isEditingTitle ? <input {...ui(`${editorId}.title`)} ref={titleInputRef} className="text-widget-title-editor" value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} onBlur={commitTitle} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitTitle(); setIsEditingTitle(false); } if (event.key === "Escape") { event.preventDefault(); cancelTitleBlurRef.current = true; setDraftTitle(originalTitleRef.current); onChangeTitle(originalTitleRef.current); setIsEditingTitle(false); titleInputRef.current?.blur(); } }} aria-label={t("textWidget.titleLabel")} /> : <b>{widget.title || t("textWidget.emptyTitle")}</b>}{editable && <button {...ui(`${editorId}.edit`)} type="button" className="text-widget-edit" onClick={() => { if (isEditingTitle) { commitTitle(); setIsEditingTitle(false); } else startEditing(); }} title={isEditingTitle ? t("textWidget.finishEditing") : t("textWidget.edit")} aria-label={isEditingTitle ? t("textWidget.finishEditing") : t("textWidget.edit")}>{isEditingTitle ? <Check aria-hidden="true" /> : <Pencil aria-hidden="true" />}</button>}</header>{!config.sourceWidgetId ? <div className="dynamic-markdown-empty">Выберите источник Table или Pivot Table в настройках.</div> : <div {...ui(`${editorId}.preview`)} className="dynamic-markdown-preview">{rendered.css && <style>{rendered.css}</style>}<div dangerouslySetInnerHTML={{ __html: rendered.html }} /></div>}</section>;
 }
 
 export { expandTemplate, normalizeTemplate };

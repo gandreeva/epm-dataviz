@@ -10,7 +10,10 @@ export const eventTimestamp=(value:unknown,granularity:TimeGranularity='day')=>{
 export const semanticDateTimestamp=(value:unknown,semantic?:Pick<FieldSemantic,'dataType'|'granularity'|'inputFormats'>)=>{
  if(semantic?.dataType&&semantic.dataType!=="date")return null;
  const raw=text(value).replace(/-/g,'');
- const granularity=semantic?.granularity||((semantic?.inputFormats||[]).includes("YYYYMM")?"month":"day");
+ // When a lightweight/test dataset has no catalog metadata, infer the
+ // canonical granularity from the value itself.  Six digits are YYYYMM;
+ // eight digits are YYYYMMDD.  Catalog metadata still takes precedence.
+ const granularity=semantic?.granularity||((semantic?.inputFormats||[]).includes("YYYYMM")||/^\d{6}$/.test(raw)?"month":"day");
  return eventTimestamp(raw,granularity);
 };
 

@@ -429,7 +429,8 @@ export function runQuery(
       warnings: [],
     };
   const view = config.viewBy.length ? config.viewBy : ["_all"],
-    stack = config.stackBy[0];
+    stackFields = config.stackBy;
+  const stackPathKey = (values: string[]) => JSON.stringify(values);
   const viewFields = view.map((id) =>
     dataset.fields.find((field) => field.id === id),
   );
@@ -471,7 +472,7 @@ export function runQuery(
             const temporal = temporalLevels[index];
             return semantic?.dataType === "date" && semantic.granularity
               ? temporalBucketLabel(value, temporal.level, semantic.granularity, semantic.inputFormats)
-              : value;
+              : semantic?.members?.[value]?.label || value;
           })
           .join(" · "),
         timeIndex = timeIndexes[0],
@@ -492,8 +493,8 @@ export function runQuery(
         rawTimeValue,
       });
     }
-    const stackValue = stack ? text(row[stack]) : "",
-      key = `${categoryKey}\u001f${stackValue}`;
+    const stackPath = stackFields.map((field) => text(row[field])),
+      key = `${categoryKey}\u001f${stackPathKey(stackPath)}`;
     groups.set(key, [...(groups.get(key) || []), row]);
   });
   const categoryItems = [...categoryIndex.values()].sort((a, b) => {
@@ -506,27 +507,32 @@ export function runQuery(
       return a.order - b.order;
     }),
     categories = categoryItems.map((category) => category.label);
-  const stackValues = stack
-    ? [...new Set([...groups.keys()].map((key) => key.split("\u001f")[1]))]
-    : [""];
+  const stackPaths = stackFields.length
+    ? [...new Map(filtered.map((row) => {
+        const values = stackFields.map((field) => text(row[field]));
+        return [stackPathKey(values), values];
+      })).values()]
+    : [[]];
   const series: ChartSeries[] = [];
   config.metrics.forEach((metric, metricIndex) =>
-    stackValues.forEach((stackValue, stackIndex) => {
-      const id = metricKey(metric, stackValue),
+    stackPaths.forEach((stackPath, stackIndex) => {
+      const stackKey = stackPathKey(stackPath),
+        seriesSuffix = stackPath.length === 0 ? "" : stackPath.length === 1 ? stackPath[0] : stackKey,
+        id = metricKey(metric, seriesSuffix),
         field = dataset.fields.find((item) => item.id === metric.fieldId),
-        stackField = stack
-          ? dataset.fields.find((item) => item.id === stack)
-          : undefined,
         setting = config.seriesSettings[id],
-        stackLabel = stackValue
-          ? stackField?.semantic?.members?.[stackValue]?.label || stackValue
-          : "",
+        columnPath = stackFields.map((stackFieldId, index) => {
+          const stackField = dataset.fields.find((item) => item.id === stackFieldId),
+            value = stackPath[index] || "";
+          return { dimensionKey: stackFieldId, value, label: value ? stackField?.semantic?.members?.[value]?.label || value : "" };
+        }),
+        stackLabel = columnPath.map((item) => item.label).filter(Boolean).join(" · "),
         label = [field?.label || metric.fieldId, stackLabel]
           .filter(Boolean)
           .join(" · "),
         timeRole =
           setting?.timeRole ||
-          (!stack ? undefined : roleFromMembers(dataset, stack, stackValue));
+          columnPath.map((item) => roleFromMembers(dataset, item.dimensionKey, item.value)).find(Boolean);
       series.push({
         id,
         dataKey: `s_${metricIndex}_${stackIndex}`,
@@ -535,14 +541,12 @@ export function runQuery(
         measureId: metric.fieldId,
         measureKey: metric.fieldId,
         measureLabel: field?.label || metric.fieldId,
-        columnPath: stack
-          ? [{ dimensionKey: stack, value: stackValue, label: stackLabel }]
-          : [],
+        columnPath,
         order: series.length,
         color:
           setting?.color ||
           COLORS[
-            (metricIndex * stackValues.length + stackIndex) % COLORS.length
+            (metricIndex * stackPaths.length + stackIndex) % COLORS.length
           ],
         visible: setting?.visible !== false,
         unit: field?.unit || "count",
@@ -563,7 +567,7 @@ export function runQuery(
       const metric = config.metrics.find(
           (binding) => binding.fieldId === item.measureKey,
         )!,
-        stackValue = stack ? item.columnPath[0]?.value || "" : "";
+        stackPath = item.columnPath.map((entry) => entry.value);
       const hierarchyAggregation = temporalLevels.some((item) => item.level)
         ? (metric.hierarchyAggregation || metric.aggregation)
         : metric.aggregation;
@@ -571,7 +575,7 @@ export function runQuery(
         ? temporalLevels.find((item) => item.level)?.field?.id
         : undefined;
       point[item.dataKey] = aggregate(
-        groups.get(`${category.key}\u001f${stackValue}`) || [],
+        groups.get(`${category.key}\u001f${stackPathKey(stackPath)}`) || [],
         metric.fieldId,
         hierarchyAggregation,
         hierarchyOrderField,
@@ -600,8 +604,8 @@ export function runQuery(
     for (const category of categoryItems) {
       contexts[category.key] = {};
       for (const item of series) {
-        const stackValue = stack ? item.columnPath[0]?.value || "" : "",
-          rows = groups.get(`${category.key}\u001f${stackValue}`) || [],
+        const stackPath = item.columnPath.map((entry) => entry.value),
+          rows = groups.get(`${category.key}\u001f${stackPathKey(stackPath)}`) || [],
           resolved = roleForRows(
             rows,
             settings,
@@ -723,6 +727,7 @@ export function runQuery(
 export function validateConfig(
   dataset: Dataset,
   config: ChartConfig,
+  datasetRegistry?: Record<string, Dataset>,
 ): string[] {
   const errors: string[] = [];
   const presentations = config.viewByPresentation || {};
@@ -806,6 +811,25 @@ export function validateConfig(
     if (!b?.actualValueField) errors.push("Добавьте Actual");
     if (!b?.targetDateField) errors.push("Добавьте Target Date");
     if (!b?.forecastValueField) errors.push("Добавьте Forecast");
+
+    const forecastDataset = datasetRegistry
+      ? (config.rollingForecast?.forecastDatasetId ? datasetRegistry[config.rollingForecast.forecastDatasetId] : dataset)
+      : undefined;
+    const actualDataset = datasetRegistry
+      ? (config.rollingForecast?.actualDatasetId ? datasetRegistry[config.rollingForecast.actualDatasetId] : dataset)
+      : undefined;
+    const sourceField = (source: Dataset | undefined, fieldId: string | null | undefined, role: string, optional = false) => {
+      if (!fieldId || !source) return;
+      if (!source.fields.some((field) => field.id === fieldId)) errors.push(`Поле ${fieldId} отсутствует в ${role} dataset`);
+      else if (!optional) return;
+    };
+    sourceField(actualDataset, b?.observationDateField, "Actual");
+    sourceField(actualDataset, b?.actualValueField, "Actual");
+    sourceField(forecastDataset, b?.targetDateField, "Forecast");
+    sourceField(forecastDataset, b?.forecastValueField, "Forecast");
+    sourceField(forecastDataset, b?.lowerBoundField, "Forecast", true);
+    sourceField(forecastDataset, b?.upperBoundField, "Forecast", true);
+    sourceField(forecastDataset, b?.forecastVersionField, "Forecast", true);
   }
   if (config.chartType === "waterfall") {
     errors.push(
@@ -853,7 +877,7 @@ export function validateConfig(
     specializedIds = [
       config.thresholdComparison?.actual.fieldId,
       config.thresholdComparison?.reference.fieldId,
-      ...Object.values(config.rollingForecast?.bindings || {}),
+      ...(config.chartType === "rolling-forecast" ? [] : Object.values(config.rollingForecast?.bindings || {})),
     ].filter((id): id is string => typeof id === "string" && Boolean(id));
   [
     ...config.viewBy,

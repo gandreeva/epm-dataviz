@@ -14,6 +14,7 @@ import {
 import {
   Activity,
   BadgePercent,
+  BookOpen,
   BarChart3,
   Database,
   ChartBarStacked,
@@ -22,9 +23,12 @@ import {
   ChartPie,
   ChartSpline,
   CalendarDays,
+  CalendarClock,
   FolderTree,
   Clock3,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   FileText,
@@ -43,14 +47,17 @@ import {
   Plus,
   Save,
   Search,
+  Sigma,
   Settings2,
   Rocket,
+  RotateCcw,
   Folder,
   Trash2,
   Undo2,
   X,
   Target,
   Table2,
+  Tag,
   type LucideIcon,
 } from "lucide-react";
 import { DATASETS, datasetList } from "./data/datasets";
@@ -63,7 +70,6 @@ import {
 } from "./config/dashboard";
 import {
   availableFilterValues,
-  runQuery,
   validateConfig,
 } from "./query/queryEngine";
 import { ChartRenderer } from "./components/ChartRenderer";
@@ -90,6 +96,7 @@ import type {
   ChartModel,
   ChartType,
   Dataset,
+  DataRow,
   DashboardParameters,
   DatasetId,
   FieldMeta,
@@ -117,7 +124,21 @@ import {
 } from "./query/smallMultiples";
 import { UI_IDS, ui } from "./uiIds";
 import { catalogGroups, datasetSemanticMeta } from "./semantic/businessCatalog";
-import { createDefaultPivotConfig, pivotHeatmapRange, runPivotQuery, type PivotTableModel } from "./query/pivotQuery";
+import { createDefaultPivotConfig, pivotHeatmapRange, type PivotTableModel } from "./query/pivotQuery";
+import { DatasetRegistry } from "./analytical/datasets/DatasetRegistry";
+import { QueryController } from "./analytical/runtime/QueryController";
+import { ApplicationAnalyticalClient } from "./analytical/runtime/ApplicationAnalyticalClient";
+import { DatasetMetadataService } from "./analytical/metadata/DatasetMetadataService";
+import { datasetDefinition } from "./analytical/datasets/definitions";
+import { validateAndNormalizeCsv } from "./analytical/datasets/formatValidator";
+import { chartAnalyticalQuery, kpiAnalyticalQuery, pivotAnalyticalQuery, queryFilters, resolveTemporalField, rollingAnalyticalQuery, thresholdAnalyticalQuery, waterfallAnalyticalQuery } from "./analytical/query/builders";
+import { chartModelFromQueryResult, kpiModelFromQueryResult, normalizeWaterfallQueryResult, pivotModelFromQueryResults, serializeQueryValue } from "./analytical/adapters";
+import { planPivotQueries } from "./analytical/pivot/PivotQueryPlanner";
+import type { ComposedDatasetDefinition, CsvDatasetDefinition, QueryResult } from "./analytical/query/types";
+import { transportKey } from "./analytical/query/transport";
+import { buildRollingForecast, buildThresholdComparison, buildWaterfall, DEFAULT_ROLLING_SETTINGS } from "./query/specializedCharts";
+import { resolveActualForecast } from "./query/actualForecast";
+import { CatalogWorkspace, type CatalogEntityRef } from "./components/CatalogWorkspace";
 import i18n, { setStoredLocale } from "./i18n";
 import { useTranslation } from "react-i18next";
 import "./styles.css";
@@ -127,6 +148,19 @@ import "./filter-controls.css";
 import "./catalog-filter-controls.css";
 import "./event-controls.css";
 import "./specialized-charts.css";
+
+const DUCKDB_CHART_TYPES = new Set<ChartType>([
+  // All generic renderers consume the same ChartModel produced from the
+  // analytical result.  Keeping this list exhaustive prevents a chart from
+  // silently falling back to the legacy in-memory query path.
+  "column", "line", "pie", "time-series-events", "stacked-column", "combo",
+  "bullet", "kpi", "heatmap", "table", "small-multiples",
+  "threshold-comparison", "rolling-forecast", "waterfall",
+]);
+const isDuckDbChart = (chartType?: ChartType) => Boolean(chartType && DUCKDB_CHART_TYPES.has(chartType));
+const emptyChartModel = (message = "Ожидание результата аналитического запроса"): ChartModel => ({
+  data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics: [], warnings: [message],
+});
 
 function LanguageSwitcher() {
   const { t } = useTranslation("common");
@@ -542,8 +576,8 @@ function DraggableField({
         onDoubleClick={readOnly ? undefined : () => onAdd?.(document.body)}
       >
         <GripVertical />
-        <span className={field.kind}>
-          {field.kind === "measure" ? <Hash /> : field.semantic?.dataType === "date" ? <Clock3 /> : "Abc"}
+        <span className={`builder-field-semantic-icon ${field.kind} ${field.semantic?.referenceId ? "reference" : ""}`} aria-hidden="true">
+          {field.semantic?.referenceId ? <BookOpen /> : field.kind === "measure" ? <Sigma /> : field.semantic?.dataType === "date" ? <CalendarClock /> : <Tag />}
         </span>
         <span>
           <b>
@@ -626,7 +660,7 @@ function Bucket({
         <b>{title}</b>
         <span className="bucket-header-actions">
           <small>{id === "metrics" ? "Measures" : "Dimensions"}</small>
-          {onAdd && <button type="button" className="bucket-add" aria-label={`Добавить поле в ${title}`} onClick={(event) => onAdd(event.currentTarget)}><Plus /></button>}
+          {onAdd && <button {...ui(UI_IDS.mapping.bucketAdd(id))} type="button" className="bucket-add" aria-label={`Добавить поле в ${title}`} onClick={(event) => onAdd(event.currentTarget)}><Plus /></button>}
         </span>
       </header>
       {items.length ? (
@@ -694,9 +728,11 @@ const ACTUAL_FORECAST_ROLE_OPTIONS: Array<[SeriesTimeRole, string]> =
   TIME_ROLE_OPTIONS.filter(([value]) => value !== "scenario");
 function TimeHierarchySwitcher({ config, dataset, dispatch }: { config: ChartConfig; dataset: (typeof DATASETS)[DatasetId]; dispatch: React.Dispatch<Action> }) {
   const { t } = useTranslation("common");
-  const supported = ["line", "time-series-events", "rolling-forecast", "column", "stacked-column", "small-multiples"].includes(config.chartType);
+  const supported = ["line", "time-series-events", "rolling-forecast", "column", "combo", "stacked-column", "small-multiples"].includes(config.chartType);
   const rolling = config.chartType === "rolling-forecast";
-  const rollingDataset = rolling && config.rollingForecast?.forecastDatasetId ? DATASETS[config.rollingForecast.forecastDatasetId] || dataset : dataset;
+  const rollingDataset = rolling
+    ? (config.rollingForecast?.forecastDatasetId && DATASETS[config.rollingForecast.forecastDatasetId]) || DATASETS.key_rate_forecast
+    : dataset;
   const fieldId = rolling ? config.rollingForecast?.bindings.targetDateField || null : config.viewBy.find((id) => dataset.fields.find((field) => field.id === id)?.semantic?.dataType === "date");
   const field = fieldId ? rollingDataset.fields.find((item) => item.id === fieldId) : undefined;
   const fallbackHierarchy = field?.semantic?.hierarchies?.[0];
@@ -1032,10 +1068,12 @@ function ActualForecastPanel({
   dataset,
   config,
   dispatch,
+  metadataService,
 }: {
   dataset: (typeof DATASETS)[DatasetId];
   config: ChartConfig;
   dispatch: React.Dispatch<Action>;
+  metadataService?: DatasetMetadataService;
 }) {
   const settings = config.actualForecast || {
     enabled: false,
@@ -1057,6 +1095,7 @@ function ActualForecastPanel({
   );
   if (!temporal || !["line", "time-series-events", "rolling-forecast"].includes(config.chartType))
     return null;
+  const [metadataValues, setMetadataValues] = useState<string[]>([]);
   const statusFields = dataset.fields.filter(
       (field) =>
         field.kind === "dimension" && field.semantic?.dataType !== "date",
@@ -1064,15 +1103,7 @@ function ActualForecastPanel({
     statusField = statusFields.find(
       (field) => field.id === settings.statusField,
     ),
-    values = statusField
-      ? [
-          ...new Set(
-            dataset.rows
-              .map((row) => String(row[statusField.id] ?? ""))
-              .filter(Boolean),
-          ),
-        ].sort()
-      : [],
+    values = metadataValues,
     catalogActual = Object.entries(statusField?.semantic?.members || {})
       .filter(([, meta]) => meta.timeRole === "actual")
       .map(([value]) => value),
@@ -1101,6 +1132,15 @@ function ActualForecastPanel({
       },
     });
   };
+  useEffect(() => {
+    let cancelled = false;
+    setMetadataValues([]);
+    if (!statusField || !metadataService) return () => { cancelled = true; };
+    metadataService.distinct(dataset.id, statusField.id).then((next) => {
+      if (!cancelled) setMetadataValues(next);
+    }).catch(() => { if (!cancelled) setMetadataValues([]); });
+    return () => { cancelled = true; };
+  }, [dataset.id, statusField?.id, metadataService]);
   const toggleValue = (role: "actual" | "forecast", value: string) => {
     const own = role === "actual" ? actual : forecast,
       other = role === "actual" ? forecast : actual,
@@ -1309,31 +1349,90 @@ function DateField({
   invalid?: boolean;
   onChange: (value: string) => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const nativeRef = useRef<HTMLInputElement>(null);
-  const openPicker = () => {
-    inputRef.current?.focus();
-    try {
-      nativeRef.current?.showPicker?.();
-    } catch {
-      // Some browsers allow focus but reject showPicker outside their gesture policy.
-    }
+  const { i18n, t } = useTranslation("common");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const canonical = value.replace(/-/g, "");
+  const parseValue = () => {
+    const fallback = new Date();
+    const year = type === "month" ? Number(canonical.slice(0, 4)) : Number(canonical.slice(0, 4));
+    const month = type === "month" ? Number(canonical.slice(4, 6)) : Number(canonical.slice(4, 6));
+    const day = type === "month" ? 1 : Number(canonical.slice(6, 8));
+    if (!/^\d{6,8}$/.test(canonical) || !year || !month || month > 12 || !day || day > 31) return new Date(Date.UTC(fallback.getFullYear(), fallback.getMonth(), 1));
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+      ? parsed
+      : new Date(Date.UTC(fallback.getFullYear(), fallback.getMonth(), 1));
   };
+  const hasValidValue = (() => {
+    const expectedLength = type === "month" ? 6 : 8;
+    if (!new RegExp(`^\\d{${expectedLength}}$`).test(canonical)) return false;
+    const parsed = parseValue();
+    const year = Number(canonical.slice(0, 4));
+    const month = Number(canonical.slice(4, 6));
+    const day = type === "month" ? 1 : Number(canonical.slice(6, 8));
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+  })();
+  const [open, setOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(() => parseValue());
+  useEffect(() => { if (open) setViewDate(parseValue()); }, [value, open, type]);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setOpen(false); } };
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("pointerdown", closeOnOutside); document.removeEventListener("keydown", closeOnEscape); };
+  }, [open]);
+  const locale = i18n.language.startsWith("en") ? "en-US" : "ru-RU";
+  const monthLabel = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" }).format(viewDate);
+  const displayValue = hasValidValue
+    ? new Intl.DateTimeFormat(locale, type === "month" ? { month: "long", year: "numeric", timeZone: "UTC" } : { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(parseValue())
+    : "";
+  const selected = parseValue();
+  const selectedKey = hasValidValue ? (type === "month" ? `${selected.getUTCFullYear()}-${selected.getUTCMonth()}` : `${selected.getUTCFullYear()}-${selected.getUTCMonth()}-${selected.getUTCDate()}`) : "";
+  const changeValue = (date: Date) => {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    onChange(type === "month" ? `${year}-${month}` : `${year}-${month}-${day}`);
+    setOpen(false);
+  };
+  const shiftView = (amount: number) => setViewDate(new Date(Date.UTC(viewDate.getUTCFullYear(), viewDate.getUTCMonth() + amount, 1)));
+  const shiftYear = (amount: number) => setViewDate(new Date(Date.UTC(viewDate.getUTCFullYear() + amount, viewDate.getUTCMonth(), 1)));
+  const calendarId = uiId ? `${uiId}.calendar` : undefined;
+  const buttonId = (suffix: string) => calendarId ? `${calendarId}.${suffix}` : undefined;
+  const dayCells = () => {
+    const first = new Date(Date.UTC(viewDate.getUTCFullYear(), viewDate.getUTCMonth(), 1));
+    const offset = (first.getUTCDay() + 6) % 7;
+    return Array.from({ length: 42 }, (_, index) => new Date(Date.UTC(viewDate.getUTCFullYear(), viewDate.getUTCMonth(), index - offset + 1)));
+  };
+  const today = new Date();
+  const todayKey = `${today.getUTCFullYear()}-${today.getUTCMonth()}-${today.getUTCDate()}`;
+  const formatDay = (date: Date) => `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
   return (
-    <label className={`date-field${invalid ? " is-invalid" : ""}`} onClick={openPicker}>
+    <div ref={rootRef} className={`date-field${invalid ? " is-invalid" : ""}`}>
       <input
-        ref={inputRef}
         {...(uiId ? ui(uiId) : {})}
         type="text"
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
-        value={value}
-        placeholder={format}
+        value={displayValue}
+        placeholder={type === "month" ? t("calendar.selectMonth") : t("calendar.selectDate")}
         readOnly
+        onClick={() => setOpen(true)}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen(true); } }}
       />
-      <input ref={nativeRef} className="date-field-native" type={type} value={value} tabIndex={-1} aria-hidden="true" onChange={(event) => onChange(event.target.value)} />
-      <CalendarDays aria-hidden="true" />
-    </label>
+      <button type="button" className="date-field-trigger" aria-label={ariaLabel} aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((current) => !current)}><CalendarDays aria-hidden="true" /></button>
+      {open && <div {...(calendarId ? ui(calendarId) : {})} className={`localized-calendar localized-calendar-${type}`} role="dialog" aria-label={t("calendar.calendarLabel")}>
+        <header className="localized-calendar-header">
+          <button {...(buttonId(type === "month" ? "previous-year" : "previous-month") ? ui(buttonId(type === "month" ? "previous-year" : "previous-month")!) : {})} type="button" aria-label={t(type === "month" ? "calendar.previousYear" : "calendar.previousMonth")} onClick={() => type === "month" ? shiftYear(-1) : shiftView(-1)}><ChevronLeft /></button>
+          <b>{monthLabel}</b>
+          <button {...(buttonId(type === "month" ? "next-year" : "next-month") ? ui(buttonId(type === "month" ? "next-year" : "next-month")!) : {})} type="button" aria-label={t(type === "month" ? "calendar.nextYear" : "calendar.nextMonth")} onClick={() => type === "month" ? shiftYear(1) : shiftView(1)}><ChevronRight /></button>
+        </header>
+        {type === "month" ? <div className="localized-calendar-month-grid">{Array.from({ length: 12 }, (_, month) => { const date = new Date(Date.UTC(viewDate.getUTCFullYear(), month, 1)); const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}`; return <button {...(buttonId(`month.${month + 1}`) ? ui(buttonId(`month.${month + 1}`)!) : {})} type="button" className={key === selectedKey ? "selected" : ""} aria-selected={key === selectedKey} onClick={() => changeValue(date)}>{new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" }).format(date)}</button>; })}</div> : <><div className="localized-calendar-weekdays">{Array.from({ length: 7 }, (_, day) => { const date = new Date(Date.UTC(2024, 0, 1 + day)); return <span key={day}>{new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(date)}</span>; })}</div><div className="localized-calendar-day-grid">{dayCells().map((date) => { const key = formatDay(date); const isSelected = key === selectedKey; const isToday = key === todayKey; const inMonth = date.getUTCMonth() === viewDate.getUTCMonth(); const dayId = buttonId(`day.${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`); return <button {...(dayId ? ui(dayId) : {})} type="button" className={`${inMonth ? "" : "outside"} ${isSelected ? "selected" : ""} ${isToday ? "today" : ""}`} aria-selected={isSelected} aria-current={isToday ? "date" : undefined} onClick={() => changeValue(date)}>{date.getUTCDate()}</button>; })}</div></>}
+        <footer><button type="button" onClick={() => changeValue(new Date(Date.UTC(today.getFullYear(), today.getMonth(), type === "month" ? 1 : today.getDate())))}>{t("calendar.today")}</button><button type="button" onClick={() => setOpen(false)}>{t("calendar.close")}</button></footer>
+      </div>}
+    </div>
   );
 }
 function FilterCombobox({
@@ -1485,6 +1584,7 @@ function PageFilters({
   rolling = false,
   onFilterScope,
   variant = "panel",
+  filterOptions,
 }: {
   page: BuilderPage;
   dataset: (typeof DATASETS)[DatasetId];
@@ -1500,7 +1600,9 @@ function PageFilters({
   rolling?: boolean;
   onFilterScope?: (fieldId: string, scope: "forecast" | "actual" | "both") => void;
   variant?: "panel" | "toolbar";
+  filterOptions?: Record<string, string[]>;
 }) {
+  const { t } = useTranslation("common");
   const compact = variant === "toolbar";
   const [openFilterId, setOpenFilterId] = useState<string | null>(null);
   useEffect(() => {
@@ -1518,7 +1620,7 @@ function PageFilters({
       {!compact && <header>
         <b>{defaults ? "Фильтры страницы" : "Фильтры и параметры"}</b>
         <span className="page-filter-header-actions">
-          {onReset && <button onClick={onReset}>Сбросить</button>}
+          {onReset && <button {...ui(UI_IDS.pageFilters.reset)} className="page-filter-reset" type="button" onClick={onReset} aria-label={t("pageFilters.reset")} title={t("pageFilters.reset")}><RotateCcw aria-hidden="true" /></button>}
           {onAddFilter && <button {...ui(UI_IDS.mapping.pageFiltersAdd)} className="page-filter-add" type="button" aria-label="Добавить фильтр" onClick={(event) => onAddFilter(event.currentTarget)}><Plus /></button>}
         </span>
       </header>}
@@ -1550,7 +1652,7 @@ function PageFilters({
           </div>
         )}
         {page.pageFilters.map((def) => {
-          const meta = dataset.fields.find((f) => f.id === def.fieldId),
+            const meta = dataset.fields.find((f) => f.id === def.fieldId) || resolveTemporalField(dataset, def),
             label = meta?.label || def.fieldId,
             value = state[def.fieldId] ?? def.defaultValue;
           if (def.kind === "date-range") {
@@ -1586,7 +1688,8 @@ function PageFilters({
             );
           }
           const selected = value as string[],
-            options = availableFilterValues(dataset, state, def.fieldId);
+            dynamicOptions = filterOptions?.[def.fieldId],
+            options = dynamicOptions !== undefined ? [...dynamicOptions] : availableFilterValues(dataset, state, def.fieldId);
           selected.forEach((item) => {
             if (!options.includes(item)) options.push(item);
           });
@@ -1628,7 +1731,7 @@ function pageFilterSummary(
   state: PageFilterState,
   dataset: (typeof DATASETS)[DatasetId],
 ) {
-  const label = dataset.fields.find((field) => field.id === definition.fieldId)?.label || definition.fieldId;
+  const label = (dataset.fields.find((field) => field.id === definition.fieldId) || resolveTemporalField(dataset, definition))?.label || definition.fieldId;
   const value = state[definition.fieldId] ?? definition.defaultValue;
   if (definition.kind === "date-range") {
     const range = value as { from: string; to: string };
@@ -1652,6 +1755,7 @@ function PageFilterToolbar({
   splitDateError,
   onSplitDate,
   editable,
+  filterOptions,
 }: {
   toolbarRef: React.RefObject<HTMLDivElement | null>;
   page: BuilderPage;
@@ -1666,12 +1770,13 @@ function PageFilterToolbar({
   splitDateError: boolean;
   onSplitDate: (value: string) => void;
   editable: boolean;
+  filterOptions?: Record<string, string[]>;
 }) {
   return (
     <div ref={toolbarRef} className="page-filter-toolbar-shell">
       <div {...ui(UI_IDS.pageFilters.toolbar)} className="page-filter-toolbar">
         <div className="page-filter-toolbar-trigger" aria-hidden="true"><Filter /><span>Фильтры</span><em>{page.pageFilters.length + 1}</em></div>
-        <PageFilters variant="toolbar" page={page} dataset={dataset} state={state} onChange={onChange} onRemoveFilter={editable ? onRemoveFilter : undefined} rolling={rolling} onFilterScope={onFilterScope} splitDate={splitDate} splitDateError={splitDateError} onSplitDate={onSplitDate} />
+        <PageFilters variant="toolbar" page={page} dataset={dataset} state={state} onChange={onChange} onRemoveFilter={editable ? onRemoveFilter : undefined} rolling={rolling} onFilterScope={onFilterScope} splitDate={splitDate} splitDateError={splitDateError} onSplitDate={onSplitDate} filterOptions={filterOptions} />
         <button {...ui(UI_IDS.mapping.pageFiltersAdd)} type="button" className="page-filter-toolbar-add" aria-label="Добавить фильтр" title="Добавить фильтр" onClick={(event) => onAddFilter(event.currentTarget)}><Plus /></button>
       </div>
     </div>
@@ -1681,9 +1786,13 @@ function PageFilterToolbar({
 function NavigationRail({
   catalogOpen,
   onToggleCatalog,
+  onOpenBuilder,
+  builderOpen,
 }: {
   catalogOpen: boolean;
   onToggleCatalog: () => void;
+  onOpenBuilder: () => void;
+  builderOpen: boolean;
 }) {
   const items = [
     { id: UI_IDS.navigation.home, label: "Главная", icon: House },
@@ -1695,7 +1804,7 @@ function NavigationRail({
   return <aside {...ui(UI_IDS.navigation.rail)} className="builder-rail" aria-label="Основная навигация">
     <div {...ui(UI_IDS.topbar.brand)} className="builder-rail-brand" title="EPM Chart Builder"><BarChart3 aria-hidden="true" /></div>
     <nav>
-      {items.map(({ id, label, icon: Icon, active }) => <button key={id} {...ui(id)} type="button" className={active ? "active" : ""} aria-label={label} aria-current={active ? "page" : undefined} aria-pressed={id === UI_IDS.navigation.data ? catalogOpen : undefined} title={label} onClick={id === UI_IDS.navigation.data ? onToggleCatalog : undefined}><Icon aria-hidden="true" /></button>)}
+      {items.map(({ id, label, icon: Icon, active }) => { const isActive = active || (id === UI_IDS.navigation.builder && builderOpen); return <button key={id} {...ui(id)} type="button" className={isActive ? "active" : ""} aria-label={label} aria-current={isActive ? "page" : undefined} aria-pressed={id === UI_IDS.navigation.data ? catalogOpen : id === UI_IDS.navigation.builder ? builderOpen : undefined} title={label} onClick={id === UI_IDS.navigation.data ? onToggleCatalog : id === UI_IDS.navigation.builder ? onOpenBuilder : undefined}><Icon aria-hidden="true" /></button>; })}
     </nav>
   </aside>;
 }
@@ -1855,7 +1964,7 @@ function PivotMappingPanel({ config, dataset, model, page, pageRuntime, onChange
   const bucket = (id: "viewBy" | "stackBy" | "metrics", title: string) => <Bucket id={id} title={title} items={id === "viewBy" ? config.rows.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: page.pageFilters.some((filter) => filter.fieldId === fieldId) })) : id === "stackBy" ? config.columns.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: page.pageFilters.some((filter) => filter.fieldId === fieldId) })) : config.aggregations.map((aggregation) => ({ id: aggregation.id, label: aggregation.label, agg: aggregation.operation, formattingStatus: config.formatting[aggregation.id] ? `${config.formatting[aggregation.id].decimals ?? 2} знака` : "Настроить формат", conditionalCount: config.conditionalFormatting.filter((item) => item.target.aggregationId === aggregation.id).reduce((sum, item) => sum + item.rules.length, 0), barsStatus: config.dataBars.some((item) => item.target.aggregationId === aggregation.id) ? (config.dataBars.find((item) => item.target.aggregationId === aggregation.id)?.style === "slim" ? "Slim" : "Normal") : "Не настроено", heatmapStatus: config.heatmapModes.some((item) => item.aggregationId === aggregation.id && item.enabled) ? "Включено · Auto range" : "Не настроено" }))} onRemove={(fieldId) => remove(id, fieldId)} onFilterToggle={id === "metrics" ? undefined : onTogglePageFilter} onAgg={id === "metrics" ? (aggregationId) => onChange({ ...config, aggregations: config.aggregations.map((item) => item.id === aggregationId ? { ...item, operation: item.operation === "SUM" ? "AVG" : "SUM" } : item) }) : undefined} onMetricFormatting={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "formatting", aggregationId }) : undefined} onMetricConditional={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "conditional", aggregationId }) : undefined} onMetricBars={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "bars", aggregationId }) : undefined} onMetricHeatmap={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "heatmap", aggregationId }) : undefined} onAdd={(anchor) => setMappingDialog({ bucket: id, anchor })} />;
   return <div className="bucket-list pivot-mapping-panel" data-ui-id="mapping.pivot.settings">
     <section className="settings-dataset-binding"><header><b>Dataset графика</b><small>Источник для mapping и query</small></header><BuilderSelector uiId="mapping.pivot.dataset" label="Источник данных" value={config.datasetId} ariaLabel="Dataset Pivot Table" options={datasetList.map((item) => ({ id: item.id, label: item.label, meta: datasetSemanticMeta(item.id).cube || item.id, count: `${item.fields.length} полей` }))} onChange={(value) => onChange(createDefaultPivotConfig(DATASETS[value as DatasetId]))} /><p>{dataset.description}</p></section>
-    {bucket("viewBy", "View by")}{bucket("stackBy", "Stack by")}{bucket("metrics", "Metrics")}
+    {bucket("viewBy", t("buckets.viewBy"))}{bucket("stackBy", t("buckets.stackBy"))}{bucket("metrics", t("buckets.metrics"))}
     <section className="pivot-editor-section" data-ui-id="mapping.pivot.sorting"><header><b>{t("pivot.sorting")}</b><small>Сортировка строк и столбцов</small></header><div className="pivot-sort-grid">{config.rows.map((id) => { const rule = config.rowSorts.find((item) => item.field === id); return <button data-ui-id={`mapping.pivot.sort.rows.${id}`} type="button" key={`row-${id}`} onClick={() => toggleSort(id, "rows")}>{fieldById(id)?.label || id} {rule ? (rule.direction === "asc" ? "↑" : "↓") : "·"}</button>; })}{config.columns.map((id) => { const rule = config.columnSorts.find((item) => item.field === id); return <button data-ui-id={`mapping.pivot.sort.columns.${id}`} type="button" key={`col-${id}`} onClick={() => toggleSort(id, "columns")}>{fieldById(id)?.label || id} {rule ? (rule.direction === "asc" ? "↑" : "↓") : "·"}</button>; })}</div></section>
     <section className="pivot-editor-section" data-ui-id="mapping.pivot.expansion"><header><b>{t("pivot.expansion")}</b><small>Состояние раскрытия и layout строк</small></header><div className="pivot-expansion-actions"><button data-ui-id="mapping.pivot.expansion.expand" type="button" onClick={() => onChange({ ...config, expansion: { rows: ["root", "*"], columns: ["root", "*"] } })}>{t("pivot.expandAll")}</button><button data-ui-id="mapping.pivot.expansion.collapse" type="button" onClick={() => onChange({ ...config, expansion: { rows: ["root"], columns: ["root"] } })}>{t("pivot.collapseAll")}</button><select data-ui-id="mapping.pivot.row-layout" value={config.rowLayout || "compact"} onChange={(event) => onChange({ ...config, rowLayout: event.target.value as "compact" | "tabular" })}><option value="compact">Compact rows</option><option value="tabular">Tabular rows</option></select></div></section>
     <PageFilters page={page} dataset={dataset} state={pageRuntime} onChange={onFilterChange} onReset={onResetFilters} onAddFilter={(anchor) => setMappingDialog({ bucket: "pageFilters", anchor })} onRemoveFilter={onRemovePageFilter} defaults />
@@ -1865,6 +1974,7 @@ function PivotMappingPanel({ config, dataset, model, page, pageRuntime, onChange
 }
 
 function App() {
+  const { t } = useTranslation("common");
   const initial = useMemo(loadDashboard, []);
   const [pages, setPages] = useState<BuilderPage[]>(() =>
     structuredClone(initial.pages),
@@ -1889,7 +1999,31 @@ function App() {
   const [showIds, setShowIds] = useState(false);
   const [dashboardMode, setDashboardMode] = useState<"view" | "edit">("view");
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogWorkspaceOpen, setCatalogWorkspaceOpen] = useState(false);
+  const [catalogDetailRequest, setCatalogDetailRequest] = useState<CatalogEntityRef | null>(null);
   const filterToolbarRef = useRef<HTMLDivElement>(null);
+  const analyticalRuntimeRef = useRef<ApplicationAnalyticalClient | null>(null);
+  const analyticalRegistryRef = useRef<DatasetRegistry | null>(null);
+  const analyticalMetadataRef = useRef<DatasetMetadataService | null>(null);
+  const analyticalControllersRef = useRef<Map<string, QueryController>>(new Map());
+  const [analyticalChartModels, setAnalyticalChartModels] = useState<Map<string, ChartModel>>(new Map());
+  const [analyticalPivotModels, setAnalyticalPivotModels] = useState<Map<string, PivotTableModel>>(new Map());
+  const [analyticalFilterOptions, setAnalyticalFilterOptions] = useState<Record<string, string[]>>({});
+  const [analyticalState, setAnalyticalState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [analyticalError, setAnalyticalError] = useState<string | null>(null);
+  useEffect(() => {
+    const start = () => {
+      const registry = analyticalRegistryRef.current || new DatasetRegistry();
+      const runtime = analyticalRuntimeRef.current || new ApplicationAnalyticalClient(registry);
+      analyticalRegistryRef.current = registry;
+      analyticalRuntimeRef.current = runtime;
+      void runtime.initialize().catch(() => undefined);
+    };
+    const idle = typeof window !== "undefined" && "requestIdleCallback" in window
+      ? window.requestIdleCallback(start, { timeout: 500 })
+      : setTimeout(start, 0);
+    return () => { if (typeof idle === "number") window.clearTimeout(idle); };
+  }, []);
   const [activeWidgetId, setActiveWidgetId] = useState<string | null>(null);
   const [catalogDatasetId, setCatalogDatasetId] = useState<DatasetId>(
     initial.pages[0]?.config.datasetId || "credit_lifecycle",
@@ -1923,14 +2057,352 @@ function App() {
   }, [activeWidgetId, activePageId]);
   const config = chartWidget.chartConfig || page.config,
     dataset = DATASETS[config.datasetId],
-    rollingForecastDataset = config.rollingForecast?.forecastDatasetId ? DATASETS[config.rollingForecast.forecastDatasetId] || dataset : dataset,
-    rollingActualDataset = config.rollingForecast?.actualDatasetId ? DATASETS[config.rollingForecast.actualDatasetId] || dataset : dataset,
+    rollingForecastDataset = config.rollingForecast?.forecastDatasetId && DATASETS[config.rollingForecast.forecastDatasetId] ? DATASETS[config.rollingForecast.forecastDatasetId] : (config.chartType === "rolling-forecast" ? DATASETS.key_rate_forecast : dataset),
+    rollingActualDataset = config.rollingForecast?.actualDatasetId && DATASETS[config.rollingForecast.actualDatasetId] ? DATASETS[config.rollingForecast.actualDatasetId] : (config.chartType === "rolling-forecast" ? DATASETS.key_rate_actual : dataset),
     rollingFilterDataset = config.chartType === "rolling-forecast" ? { ...rollingForecastDataset, id: rollingForecastDataset.id, label: "Forecast + Actual", description: "Dimensions Forecast и Actual кубов", fields: [...rollingForecastDataset.fields, ...rollingActualDataset.fields.filter((field) => !rollingForecastDataset.fields.some((item) => item.id === field.id))], rows: [...rollingForecastDataset.rows, ...rollingActualDataset.rows] } : dataset,
     pageRuntime =
       runtimeFilters[activePageId] ||
       Object.fromEntries(
         page.pageFilters.map((f) => [f.fieldId, f.defaultValue]),
       );
+  const pageRuntimeKey = JSON.stringify(pageRuntime);
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const eligibleCharts = page.widgets.filter((widget) => isConfigurableWidget(widget) && isDuckDbChart(widget.chartConfig?.chartType));
+      const eligiblePivots = page.widgets.filter((widget) => widget.type === "pivot-table");
+      if (!eligibleCharts.length && !eligiblePivots.length) return;
+      setAnalyticalState("loading");
+      setAnalyticalError(null);
+      try {
+        const registry = analyticalRegistryRef.current || new DatasetRegistry();
+        const runtime = analyticalRuntimeRef.current || new ApplicationAnalyticalClient(registry);
+        analyticalRegistryRef.current = registry;
+        analyticalRuntimeRef.current = runtime;
+        analyticalMetadataRef.current = analyticalMetadataRef.current || new DatasetMetadataService(runtime, registry, DATASETS);
+        await runtime.initialize();
+        const registered = new Set<string>();
+        const ensureDataset = async (datasetId: DatasetId) => {
+          if (registered.has(datasetId) || registry.state(datasetId)?.state === "ready") return;
+          const pending = registry.pending(datasetId);
+          if (pending) { await pending; registered.add(datasetId); return; }
+          const definition = datasetDefinition(datasetId);
+          if (!definition) throw new Error(`Dataset ${datasetId} не имеет CSV definition`);
+          const registration = (async () => {
+          if (definition.source.type === "composed") {
+            const composedDefinition = definition as ComposedDatasetDefinition;
+            if (!runtime.registerComposedDataset) throw new Error("Analytical runtime does not support composed datasets");
+            const texts: Record<string, string> = {};
+            for (const source of composedDefinition.source.sources) {
+              const cached = registry.text(source.definition.source.url);
+              if (cached !== undefined) texts[source.datasetId] = validateAndNormalizeCsv(cached, DATASETS[source.datasetId], source.definition);
+              else {
+                const response = await fetch(source.definition.source.url);
+                if (!response.ok) throw new Error(`Не удалось загрузить ${source.definition.source.url}`);
+                texts[source.datasetId] = validateAndNormalizeCsv(await response.text(), DATASETS[source.datasetId], source.definition);
+                registry.setText(source.definition.source.url, texts[source.datasetId]);
+              }
+            }
+            await runtime.registerComposedDataset(composedDefinition, texts);
+          } else {
+            const csvDefinition = definition as CsvDatasetDefinition;
+            const cached = registry.text(csvDefinition.source.url);
+            const text = cached !== undefined ? validateAndNormalizeCsv(cached, DATASETS[datasetId], csvDefinition) : await (async () => { const response = await fetch(csvDefinition.source.url); if (!response.ok) throw new Error(`Не удалось загрузить ${csvDefinition.source.url}`); const value = validateAndNormalizeCsv(await response.text(), DATASETS[datasetId], csvDefinition); registry.setText(csvDefinition.source.url, value); return value; })();
+            if (!runtime.registerDataset) throw new Error("Analytical runtime does not support CSV datasets");
+            await runtime.registerDataset(csvDefinition, text);
+          }
+          registered.add(datasetId);
+          })();
+          registry.setPending(datasetId, registration);
+          await registration;
+        };
+        const nextCharts = new Map<string, ChartModel>();
+        const nextPivots = new Map<string, PivotTableModel>();
+        const nextFilterOptions: Record<string, string[]> = {};
+        // Resolve every dictionary against the physical dataset that owns the
+        // field.  This is important for composed/multi-source widgets: a
+        // synthetic concatenated Dataset is a UI convenience, not a DuckDB
+        // table and must never be used for DISTINCT queries.
+        const dictionaryDatasets: Dataset[] = [];
+        const addDictionaryDataset = (source: Dataset | undefined) => {
+          if (source && !dictionaryDatasets.some((item) => item.id === source.id)) dictionaryDatasets.push(source);
+        };
+        addDictionaryDataset(DATASETS[config.datasetId] || DATASETS.credit_lifecycle);
+        eligibleCharts.forEach((widget) => addDictionaryDataset(DATASETS[(widget.chartConfig?.datasetId || page.config.datasetId) as DatasetId] || DATASETS.credit_lifecycle));
+        if (config.chartType === "rolling-forecast") {
+          addDictionaryDataset(rollingForecastDataset);
+          addDictionaryDataset(rollingActualDataset);
+        }
+        for (const definition of page.pageFilters.filter((item) => item.kind === "categorical")) {
+          const owner = dictionaryDatasets.find((source) => source.fields.some((field) => field.id === definition.fieldId));
+          if (!owner) continue;
+          try {
+            await ensureDataset(owner.id);
+            const filters = queryFilters(config, page.pageFilters.filter((item) => item.fieldId !== definition.fieldId), pageRuntime, owner);
+            nextFilterOptions[definition.fieldId] = await runtime.distinct({ datasetId: owner.id, fieldId: definition.fieldId, filters });
+          } catch {
+            // A field without a registered CSV definition remains unavailable;
+            // do not silently copy values from another physical dataset.
+          }
+        }
+        for (const widget of eligibleCharts) {
+          if (!isConfigurableWidget(widget)) continue;
+          const widgetConfig = widget.chartConfig || page.config;
+          const widgetDataset = DATASETS[widgetConfig.datasetId] || DATASETS.credit_lifecycle;
+          if (widgetConfig.chartType === "waterfall") {
+            const waterfallConfig = widgetConfig.waterfall;
+            const setWaterfallDiagnostic = (message: string) => nextCharts.set(widget.id, {
+              data: [], series: [], categories: [], events: [], eventCategories: [],
+              diagnostics: [message], warnings: [],
+            });
+            if (!waterfallConfig) {
+              setWaterfallDiagnostic(`Waterfall не настроен для dataset «${widgetDataset.id}»`);
+              continue;
+            }
+            const query = waterfallAnalyticalQuery(widgetDataset, waterfallConfig, page.pageFilters, pageRuntime, widgetConfig);
+            if (!query) {
+              const missing = [
+                !waterfallConfig.dimensionKey ? "аналитику статей" : null,
+                !waterfallConfig.items.some((item) => item.enabled && item.action !== "exclude" && item.measureKey) ? "показатель и sequence" : null,
+              ].filter((item): item is string => Boolean(item));
+              setWaterfallDiagnostic(`Waterfall не может построить запрос: выберите ${missing.join(" и ") || "валидную настройку"}`);
+              continue;
+            }
+            if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") {
+              console.info("[browser-analytical] waterfall query", {
+                widgetId: widget.id,
+                datasetId: widgetDataset.id,
+                dimensionKey: waterfallConfig.dimensionKey,
+                items: waterfallConfig.items.filter((item) => item.enabled && item.action !== "exclude").map((item) => ({ memberKey: item.memberKey, measureKey: item.measureKey, action: item.action })),
+                filters: query.filters,
+              });
+            }
+            try {
+              await ensureDataset(widgetDataset.id);
+              const controller = analyticalControllersRef.current.get(widget.id) || new QueryController(runtime);
+              analyticalControllersRef.current.set(widget.id, controller);
+              const snapshot = await controller.execute(query);
+              if (snapshot.error) {
+                setWaterfallDiagnostic(`Waterfall query: ${snapshot.error.message}`);
+                continue;
+              }
+              if (!snapshot.result || snapshot.result.rowCount === 0) {
+                const filters = query.filters.map((filter) => `${filter.fieldId} ${filter.operator}`).join(", ") || "без фильтров";
+                setWaterfallDiagnostic(`После фильтрации dataset «${widgetDataset.id}» нет данных (${filters})`);
+                continue;
+              }
+              const fields = [...new Set(waterfallConfig.items.filter((item) => item.enabled && item.action !== "exclude").map((item) => item.measureKey))];
+              const rows = normalizeWaterfallQueryResult(snapshot.result, waterfallConfig.dimensionKey || "", fields);
+              if (typeof window !== "undefined" && window.localStorage.getItem("waterfall.debug") === "true") {
+                console.info("[waterfall:result]", {
+                  datasetId: widgetDataset.id,
+                  columns: snapshot.result.columns.map((column) => column.name),
+                  sampleRow: Object.fromEntries(Object.entries(snapshot.result.rows[0] || {}).map(([key, value]) => [key, serializeQueryValue(value)])),
+                  normalizedSampleRow: Object.fromEntries(Object.entries(rows[0] || {}).map(([key, value]) => [key, serializeQueryValue(value)])),
+                  measureFields: fields,
+                });
+              }
+              const waterfall = buildWaterfall(widgetDataset, rows, waterfallConfig);
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], waterfall: waterfall.model, diagnostics: waterfall.diagnostics, warnings: waterfall.warnings });
+            } catch (error) {
+              setWaterfallDiagnostic(`Waterfall query: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            continue;
+          }
+          if (widgetConfig.chartType === "rolling-forecast" && widgetConfig.rollingForecast) {
+            const settings = {
+              ...structuredClone(DEFAULT_ROLLING_SETTINGS),
+              ...widgetConfig.rollingForecast,
+              bindings: { ...DEFAULT_ROLLING_SETTINGS.bindings, ...(widgetConfig.rollingForecast.bindings || {}) },
+            };
+            const forecastDataset = settings.forecastDatasetId && DATASETS[settings.forecastDatasetId] ? DATASETS[settings.forecastDatasetId] : DATASETS.key_rate_forecast;
+            const actualDataset = settings.actualDatasetId && DATASETS[settings.actualDatasetId] ? DATASETS[settings.actualDatasetId] : DATASETS.key_rate_actual;
+            const rollingDebugEnabled = typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true";
+            let forecastQuery: ReturnType<typeof rollingAnalyticalQuery>, actualQuery: ReturnType<typeof rollingAnalyticalQuery>;
+            try {
+              forecastQuery = rollingAnalyticalQuery(forecastDataset, settings, page.pageFilters, pageRuntime, "forecast");
+              actualQuery = rollingAnalyticalQuery(actualDataset, settings, page.pageFilters, pageRuntime, "actual");
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (rollingDebugEnabled) console.error("[rolling-forecast] query build failed", { widgetId: widget.id, message, settings, forecastDataset: forecastDataset.id, actualDataset: actualDataset.id });
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics: [`Не удалось построить Rolling Forecast query: ${message}`], warnings: [] });
+              continue;
+            }
+            if (!forecastQuery || !actualQuery) {
+              const missing = [
+                !settings.bindings.targetDateField ? "Target Date" : null,
+                !settings.bindings.forecastValueField ? "Forecast" : null,
+                !settings.bindings.observationDateField ? "Observation Date" : null,
+                !settings.bindings.actualValueField ? "Actual" : null,
+              ].filter((item): item is string => Boolean(item));
+              if (rollingDebugEnabled) console.error("[rolling-forecast] query not built", { widgetId: widget.id, missing, settings, forecastDataset: forecastDataset.id, actualDataset: actualDataset.id });
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics: [`Не настроены поля Rolling Forecast: ${missing.join(", ") || "проверьте source dataset"}`], warnings: [] });
+              continue;
+            }
+            if (rollingDebugEnabled) console.info("[rolling-forecast] query", { widgetId: widget.id, role: "forecast", datasetId: forecastQuery.datasetId, dimensions: forecastQuery.dimensions, measures: forecastQuery.measures, filters: forecastQuery.filters });
+            if (rollingDebugEnabled) console.info("[rolling-forecast] query", { widgetId: widget.id, role: "actual", datasetId: actualQuery.datasetId, dimensions: actualQuery.dimensions, measures: actualQuery.measures, filters: actualQuery.filters });
+            try {
+              await ensureDataset(forecastDataset.id);
+              await ensureDataset(actualDataset.id);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (rollingDebugEnabled) console.error("[rolling-forecast] dataset registration failed", { widgetId: widget.id, forecastDataset: forecastDataset.id, actualDataset: actualDataset.id, message });
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics: [`Не удалось зарегистрировать источник Rolling Forecast: ${message}`], warnings: [] });
+              continue;
+            }
+            const forecastController = analyticalControllersRef.current.get(`${widget.id}:forecast`) || new QueryController(runtime);
+            const actualController = analyticalControllersRef.current.get(`${widget.id}:actual`) || new QueryController(runtime);
+            analyticalControllersRef.current.set(`${widget.id}:forecast`, forecastController);
+            analyticalControllersRef.current.set(`${widget.id}:actual`, actualController);
+            const [forecastSnapshot, actualSnapshot] = await Promise.all([forecastController.execute(forecastQuery), actualController.execute(actualQuery)]);
+            if (rollingDebugEnabled) {
+              console.info("[rolling-forecast] query result", { widgetId: widget.id, role: "forecast", state: forecastSnapshot.state, rowCount: forecastSnapshot.result?.rowCount ?? 0, error: forecastSnapshot.error?.message || null });
+              console.info("[rolling-forecast] query result", { widgetId: widget.id, role: "actual", state: actualSnapshot.state, rowCount: actualSnapshot.result?.rowCount ?? 0, error: actualSnapshot.error?.message || null });
+            }
+            if (forecastSnapshot.error || actualSnapshot.error) {
+              const diagnostics = [
+                forecastSnapshot.error ? `Forecast query: ${forecastSnapshot.error.message}` : null,
+                actualSnapshot.error ? `Actual query: ${actualSnapshot.error.message}` : null,
+              ].filter((item): item is string => Boolean(item));
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics, warnings: [] });
+              continue;
+            }
+            if (forecastSnapshot.result && actualSnapshot.result) {
+              const normalize = (result: QueryResult, fields: string[]) => result.rows.map((row) => fields.reduce((next, field) => ({ ...next, [field]: row[`${field}__SUM`] ?? row[field] }), { ...row } as Record<string, unknown>) as DataRow);
+              const bindings = settings.bindings;
+              const forecastFields = [bindings.forecastValueField, bindings.lowerBoundField, bindings.upperBoundField].filter((field): field is string => Boolean(field));
+              const actualFields = [bindings.actualValueField].filter((field): field is string => Boolean(field));
+              const rolling = buildRollingForecast(forecastDataset, normalize(forecastSnapshot.result, forecastFields), settings, actualDataset, normalize(actualSnapshot.result, actualFields));
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], rollingForecast: rolling.model, diagnostics: rolling.diagnostics, warnings: rolling.warnings });
+            } else {
+              const emptySources = [
+                forecastSnapshot.result ? null : "Forecast",
+                actualSnapshot.result ? null : "Actual",
+              ].filter((item): item is string => Boolean(item));
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], diagnostics: [], warnings: [`Нет результата DuckDB-запроса для: ${emptySources.join(", ")}`] });
+            }
+            continue;
+          }
+          await ensureDataset(widgetDataset.id);
+          const controller = analyticalControllersRef.current.get(widget.id) || new QueryController(runtime);
+          analyticalControllersRef.current.set(widget.id, controller);
+          const thresholdQuery = widgetConfig.chartType === "threshold-comparison" ? thresholdAnalyticalQuery(widgetDataset, widgetConfig, page.pageFilters, pageRuntime) : null;
+          const query = widgetConfig.chartType === "kpi" ? kpiAnalyticalQuery(widgetDataset, widgetConfig, page.pageFilters, pageRuntime) : thresholdQuery || chartAnalyticalQuery(widgetDataset, widgetConfig, page.pageFilters, pageRuntime);
+          if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") {
+            console.info("[browser-analytical] query filters", {
+              widgetId: widget.id,
+              datasetId: widgetDataset.id,
+              filters: query.filters,
+              splitDate: parameters.splitDate,
+              splitDateInQuery: query.filters.some((filter) => filter.fieldId === "splitDate" || filter.fieldId === "split-date"),
+            });
+          }
+          let snapshot: Awaited<ReturnType<QueryController["execute"]>>;
+          try {
+            snapshot = await controller.execute(query);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            nextCharts.set(widget.id, { ...emptyChartModel("Не удалось выполнить аналитический запрос"), diagnostics: [message] });
+            if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") console.error("[browser-analytical] widget query failed", { widgetId: widget.id, message });
+            continue;
+          }
+          if (!snapshot.result) {
+            const message = snapshot.error?.message || "Нет результата аналитического запроса";
+            nextCharts.set(widget.id, { ...emptyChartModel("Не удалось получить данные"), diagnostics: [message] });
+            if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") console.error("[browser-analytical] widget query returned no result", { widgetId: widget.id, message });
+            continue;
+          }
+          if (snapshot.result) {
+            if (widgetConfig.chartType === "kpi") nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], kpi: kpiModelFromQueryResult(widgetDataset, widgetConfig, snapshot.result), diagnostics: [], warnings: [] });
+            else if (widgetConfig.chartType === "threshold-comparison" && widgetConfig.thresholdComparison?.measureField && widgetConfig.thresholdComparison.differentiator?.fieldId) {
+              const settings = widgetConfig.thresholdComparison;
+              const measure = settings.measureField;
+              if (!measure) continue;
+              const rows = snapshot.result.rows.map((row) => ({ ...row, [measure]: row[`${measure}__SUM`] } as DataRow));
+              const threshold = buildThresholdComparison(widgetDataset, rows, settings, page.pageFilters);
+              nextCharts.set(widget.id, { data: [], series: [], categories: [], events: [], eventCategories: [], thresholdComparison: threshold.model, diagnostics: threshold.diagnostics, warnings: threshold.warnings });
+            } else {
+              const chartModel = chartModelFromQueryResult(widgetDataset, widgetConfig, snapshot.result);
+              const resolvedSplit = resolveActualForecast(widgetDataset, widgetConfig, chartModel, parameters.splitDate || undefined);
+              if (resolvedSplit) chartModel.actualForecast = resolvedSplit;
+              nextCharts.set(widget.id, chartModel);
+            }
+          }
+        }
+        for (const widget of eligiblePivots) {
+          if (widget.type !== "pivot-table") continue;
+          const pivotConfig = widget.pivotConfig || createDefaultPivotConfig(DATASETS[widget.datasetId || page.config.datasetId] || DATASETS.credit_lifecycle);
+          const pivotDataset = DATASETS[pivotConfig.datasetId] || DATASETS.credit_lifecycle;
+          await ensureDataset(pivotDataset.id);
+          const pivotPlan = planPivotQueries(pivotDataset, pivotConfig, page.pageFilters, pageRuntime);
+          const detailQuery = pivotPlan.scopes[0].query;
+          const detailControllers = pivotPlan.scopes.map((scope) => {
+            const suffix = scope.axis === "root" ? "detail" : `detail:${scope.key}`;
+            const controller = analyticalControllersRef.current.get(`${widget.id}:${suffix}`) || new QueryController(runtime);
+            analyticalControllersRef.current.set(`${widget.id}:${suffix}`, controller);
+            return { scope, controller };
+          });
+          const totalController = analyticalControllersRef.current.get(`${widget.id}:total`) || new QueryController(runtime);
+          analyticalControllersRef.current.set(`${widget.id}:total`, totalController);
+          try {
+            const subtotalControllers = pivotPlan.subtotalScopes.map((scope) => {
+              const key = `${widget.id}:subtotal:${scope.rowDepth}`;
+              const controller = analyticalControllersRef.current.get(key) || new QueryController(runtime);
+              analyticalControllersRef.current.set(key, controller);
+              return { scope, controller };
+            });
+            const totalQuery = pivotPlan.totalScope.query;
+            if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") {
+              console.info("[browser-analytical] pivot queries", {
+                widgetId: widget.id,
+                detail: { dimensions: detailQuery.dimensions, orderBy: detailQuery.orderBy, filters: detailQuery.filters },
+                subtotals: pivotPlan.subtotalScopes.map((scope) => ({ rowDepth: scope.rowDepth, dimensions: scope.query.dimensions, orderBy: scope.query.orderBy, filters: scope.query.filters })),
+                total: { dimensions: totalQuery.dimensions, orderBy: totalQuery.orderBy, filters: totalQuery.filters },
+              });
+            }
+            const [detailSnapshot, totalSnapshot, ...subtotalSnapshots] = await Promise.all([
+              Promise.all(detailControllers.map(({ scope, controller }) => controller.execute(scope.query))).then((snapshots) => {
+                const first = snapshots[0];
+                if (!first.result || snapshots.length === 1) return first;
+                const rows = [...new Map(snapshots.flatMap((snapshot) => snapshot.result?.rows || []).map((row) => [transportKey(row), row] as const)).values()];
+                return { ...first, result: { ...first.result, rows, rowCount: rows.length } };
+              }),
+              totalController.execute(totalQuery),
+              ...subtotalControllers.map(({ scope, controller }) => controller.execute(scope.query)),
+            ]);
+            if (detailSnapshot.result && totalSnapshot.result && subtotalSnapshots.every((snapshot) => snapshot.result)) {
+              nextPivots.set(widget.id, pivotModelFromQueryResults(pivotConfig, {
+                detail: detailSnapshot.result,
+                total: totalSnapshot.result,
+                subtotals: subtotalSnapshots.flatMap((snapshot, index) => snapshot.result ? [{ rowDepth: subtotalControllers[index].scope.rowDepth, result: snapshot.result }] : []),
+              }));
+            }
+            else nextPivots.set(widget.id, { rows: [], columns: [], cells: [], diagnostics: [detailSnapshot.error?.message || totalSnapshot.error?.message || "Нет результата Pivot query"], warnings: [] });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            nextPivots.set(widget.id, { rows: [], columns: [], cells: [], diagnostics: [message], warnings: [] });
+            if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") console.error("[browser-analytical] pivot query failed", { widgetId: widget.id, message });
+          }
+        }
+        if (cancelled) return;
+        setAnalyticalChartModels(nextCharts);
+        setAnalyticalPivotModels(nextPivots);
+        setAnalyticalFilterOptions(nextFilterOptions);
+        setAnalyticalState("ready");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (typeof window !== "undefined" && window.localStorage.getItem("browser-analytical.debug") === "true") {
+          console.error("[browser-analytical] dashboard query failed", error);
+        }
+        if (!cancelled) {
+          setAnalyticalState("error");
+          setAnalyticalError(message);
+        }
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [page.id, page.widgets, page.pageFilters, page.config.datasetId, config.datasetId, pageRuntimeKey]);
   const widgetRenderStates = useMemo(() => {
     const states = new Map<string, { config: ChartConfig; dataset: Dataset; model: ChartModel }>();
     page.widgets.forEach((widget) => {
@@ -1940,21 +2412,22 @@ function App() {
       states.set(widget.id, {
         config: widgetConfig,
         dataset: widgetDataset,
-        model: runQuery(widgetDataset, widgetConfig, pageRuntime, parameters, DATASETS, page.pageFilters),
+        model: analyticalChartModels.get(widget.id) || emptyChartModel(analyticalState === "loading" ? "Выполняется аналитический запрос…" : "Нет результата DuckDB-запроса"),
       });
     });
     return states;
-  }, [page, pageRuntime, parameters]);
+  }, [page, pageRuntime, parameters, analyticalChartModels]);
   const pivotRenderStates = useMemo(() => {
     const states = new Map<string, { config: PivotTableConfig; dataset: (typeof DATASETS)[DatasetId]; model: PivotTableModel }>();
     page.widgets.forEach((widget) => {
       if (widget.type !== "pivot-table") return;
       const pivotConfig = widget.pivotConfig || createDefaultPivotConfig(DATASETS[widget.datasetId || config.datasetId] || DATASETS.credit_lifecycle);
       const pivotDataset = DATASETS[pivotConfig.datasetId] || DATASETS.credit_lifecycle;
-      states.set(widget.id, { config: pivotConfig, dataset: pivotDataset, model: runPivotQuery(pivotDataset, pivotConfig, pageRuntime, page.pageFilters) });
+      const model = analyticalPivotModels.get(widget.id);
+      if (model) states.set(widget.id, { config: pivotConfig, dataset: pivotDataset, model });
     });
     return states;
-  }, [page, pageRuntime, config.datasetId]);
+  }, [page, pageRuntime, config.datasetId, analyticalPivotModels]);
   const activePivotState = activeWidget?.type === "pivot-table" ? pivotRenderStates.get(activeWidget.id) : undefined;
   const markdownSources = page.widgets.filter((widget) => widget.type === "table" || widget.type === "pivot-table");
   const markdownSource = activeWidget?.type === "markdown" ? markdownSources.find((widget) => widget.id === activeWidget.markdownConfig?.sourceWidgetId) : undefined;
@@ -2062,7 +2535,7 @@ function App() {
     });
     updatePage((item) => ({
       ...item,
-      pageFilters: item.pageFilters.filter((filter) => available.has(filter.fieldId)),
+      pageFilters: item.pageFilters.filter((filter) => available.has(filter.fieldId) || (filter.kind === "date-range" && resolveTemporalField(nextDataset, filter) !== undefined)),
     }));
     setRuntimeFilters((current) => ({ ...current, [activePageId]: {} }));
     setQuery("");
@@ -2087,35 +2560,48 @@ function App() {
     setParameters(structuredClone(savedParameters));
   };
   const togglePageFilter = (fieldId: string, sourceDataset = dataset, scope?: "forecast" | "actual" | "both") => {
+    const sourceMeta = sourceDataset.fields.find((field) => field.id === fieldId);
+    const temporalKey = sourceMeta?.semantic?.dataType === "date" ? (sourceMeta.semantic.temporalKey || "calendar") : undefined;
     const existing = page.pageFilters.find(
-      (filter) => filter.fieldId === fieldId,
+      (filter) => filter.fieldId === fieldId || Boolean(temporalKey && filter.kind === "date-range" && (filter.temporalKey || "calendar") === temporalKey),
     );
     if (existing) {
+      const existingFieldId = existing.fieldId;
       updatePage((item) => ({
         ...item,
         pageFilters: item.pageFilters.filter(
-          (filter) => filter.fieldId !== fieldId,
+          (filter) => filter.fieldId !== existingFieldId,
         ),
       }));
       setRuntimeFilters((current) => ({
         ...current,
         [activePageId]: Object.fromEntries(
-          Object.entries(pageRuntime).filter(([id]) => id !== fieldId),
+          Object.entries(pageRuntime).filter(([id]) => id !== existingFieldId),
         ),
       }));
       return;
     }
-    const meta = sourceDataset.fields.find((field) => field.id === fieldId),
+    const meta = sourceMeta,
+      source = meta ? {
+        datasetId: sourceDataset.id,
+        fieldId,
+        semanticRole: meta.semantic?.role,
+        dataType: meta.semantic?.dataType,
+        temporalKey: meta.semantic?.temporalKey,
+        granularity: meta.semantic?.granularity,
+      } : undefined,
       next: PageFilterDefinition =
         meta?.semantic?.dataType === "date" && meta.semantic.granularity
           ? {
               fieldId,
               kind: "date-range",
               granularity: meta.semantic.granularity,
+              temporalKey,
+              source,
               defaultValue: { from: "", to: "" },
               ...(config.chartType === "rolling-forecast" ? { scope: { type: scope || "forecast" as const, fieldId } } : {}),
             }
-          : { fieldId, kind: "categorical", defaultValue: [], ...(config.chartType === "rolling-forecast" ? { scope: { type: scope || "forecast" as const, fieldId } } : {}) };
+          : { fieldId, kind: "categorical", source, defaultValue: [], ...(config.chartType === "rolling-forecast" ? { scope: { type: scope || "forecast" as const, fieldId } } : {}) };
     updatePage((item) => ({
       ...item,
       pageFilters: [...item.pageFilters, next],
@@ -2146,9 +2632,9 @@ function App() {
     useSensor(KeyboardSensor),
   );
   const model = widgetRenderStates.get(chartWidget.id)?.model
-    || runQuery(dataset, config, pageRuntime, parameters, DATASETS, page.pageFilters);
+    || emptyChartModel(analyticalState === "loading" ? "Выполняется аналитический запрос…" : "Нет результата DuckDB-запроса");
   const errors = useMemo(
-    () => validateConfig(dataset, config),
+    () => validateConfig(dataset, config, DATASETS),
     [dataset, config],
   );
   const parameterError = !isValidSplitDate(parameters.splitDate),
@@ -2203,7 +2689,6 @@ function App() {
           </div>
           <div className="builder-actions">
             <LanguageSwitcher />
-            <button {...ui(UI_IDS.topbar.filters)} type="button" className="builder-icon-action" aria-label="Перейти к фильтрам" title="Фильтры" onClick={() => { filterToolbarRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); filterToolbarRef.current?.querySelector<HTMLElement>("input,button,select")?.focus(); }}><Filter /></button>
             <button
               type="button"
               data-ui-id="dashboard.mode-toggle"
@@ -2276,8 +2761,9 @@ function App() {
             </button>
           </div>
         </header>
-        <NavigationRail catalogOpen={catalogOpen} onToggleCatalog={() => dashboardMode === "edit" && setCatalogOpen((value) => !value)} />
-        <PageFilterToolbar toolbarRef={filterToolbarRef} page={page} dataset={config.chartType === "rolling-forecast" ? rollingFilterDataset : dataset} state={pageRuntime} onChange={setFilter} onRemoveFilter={removePageFilter} onAddFilter={(anchor) => setMappingDialog({ bucket: "pageFilters", anchor })} rolling={config.chartType === "rolling-forecast"} onFilterScope={setRollingFilterScope} splitDate={parameters.splitDate} splitDateError={parameterError} onSplitDate={(value) => setParameters({ splitDate: normalizeSplitDateInput(value) })} editable={dashboardMode === "edit"} />
+        <NavigationRail catalogOpen={catalogOpen} builderOpen={catalogWorkspaceOpen} onToggleCatalog={() => { setCatalogWorkspaceOpen(false); setCatalogDetailRequest(null); if (dashboardMode === "edit") setCatalogOpen((value) => !value); }} onOpenBuilder={() => { setCatalogOpen(false); setCatalogDetailRequest(null); setCatalogWorkspaceOpen(true); }} />
+        {catalogWorkspaceOpen ? <CatalogWorkspace initialEntity={catalogDetailRequest} /> : <>
+        <PageFilterToolbar toolbarRef={filterToolbarRef} page={page} dataset={config.chartType === "rolling-forecast" ? rollingFilterDataset : dataset} state={pageRuntime} onChange={setFilter} onRemoveFilter={removePageFilter} onAddFilter={(anchor) => setMappingDialog({ bucket: "pageFilters", anchor })} rolling={config.chartType === "rolling-forecast"} onFilterScope={setRollingFilterScope} splitDate={parameters.splitDate} splitDateError={parameterError} onSplitDate={(value) => setParameters({ splitDate: normalizeSplitDateInput(value) })} editable={dashboardMode === "edit"} filterOptions={analyticalFilterOptions} />
         <main className={`builder-workspace ${dashboardMode}-mode`}>
           {dashboardMode === "edit" && <aside {...ui(UI_IDS.catalog.root)} className={`builder-catalog catalog-drawer ${catalogOpen ? "is-open" : ""}`}>
             <div className="catalog-drawer-header"><b>Данные</b><button {...ui(UI_IDS.catalog.toggle)} type="button" aria-label="Закрыть каталог данных" title="Закрыть" onClick={() => setCatalogOpen(false)}><X /></button></div>
@@ -2287,6 +2773,8 @@ function App() {
               value={catalogDatasetId}
               ariaLabel="Источники catalog"
               options={datasetList.map((item) => ({ id: item.id, label: item.label, meta: datasetSemanticMeta(item.id).cube || item.id, count: `${item.fields.length} полей` }))}
+              onOpenDetail={() => { setCatalogOpen(false); setCatalogDetailRequest({ kind: "dataset", id: catalogDatasetId }); setCatalogWorkspaceOpen(true); }}
+              detailUiId={UI_IDS.catalog.sourceDetail}
               onChange={(value) => { setCatalogDatasetId(value as DatasetId); setQuery(""); }}
             />
             <div {...ui(UI_IDS.catalog.meta)} className="catalog-dataset-meta">
@@ -2306,7 +2794,7 @@ function App() {
               <section key={kind}>
                 <h3>
                   {kind === "dimension" ? "Время / Измерения" : catalogGroups[kind]}{" "}
-                  <span>
+                  <span data-ui-id="browser-analytical.status">
                     {catalogDataset.fields.filter((f) => f.kind === kind).length}
                   </span>
                 </h3>
@@ -2369,6 +2857,16 @@ function App() {
                     {errors.join(" · ")}
                   </div>
                 )}
+                {analyticalError && (
+                  <div
+                    data-ui-id="browser-analytical.error"
+                    className="validation"
+                    role="alert"
+                  >
+                    <Info />
+                    {analyticalError}
+                  </div>
+                )}
                 <DashboardCanvas
                   widgets={page.widgets}
                   layouts={page.layouts}
@@ -2408,8 +2906,7 @@ function App() {
                   aria-live="polite"
                 >
                   <span>
-                    {dataset.rows.length.toLocaleString("ru-RU")} строк · local
-                    demo engine
+                    {analyticalState === "loading" ? "DuckDB-Wasm · загрузка" : analyticalState === "ready" ? "DuckDB-Wasm · готов" : analyticalState === "error" ? "DuckDB-Wasm · ошибка" : "DuckDB-Wasm"}
                   </span>
                   <span>
                     {model.series.filter((series) => series.visible).length} из{" "}
@@ -2464,6 +2961,7 @@ function App() {
                     <SpecializedMapping
                       dataset={dataset}
                       datasets={DATASETS}
+                      metadataService={analyticalMetadataRef.current || undefined}
                       config={config}
                       pageFilters={page.pageFilters}
                       onChange={(next) => dispatch({ type: "set", config: next })}
@@ -2473,7 +2971,7 @@ function App() {
                   <>
                 <Bucket
                   id="viewBy"
-                  title="View by"
+                  title={t("buckets.viewBy")}
                   items={config.viewBy.map((id) => ({
                     id,
                     label: field(id)?.label || id,
@@ -2492,7 +2990,7 @@ function App() {
                 />
                 <Bucket
                   id="stackBy"
-                  title="Stack by"
+                  title={t("buckets.stackBy")}
                   items={config.stackBy.map((id) => ({
                     id,
                     label: field(id)?.label || id,
@@ -2504,7 +3002,7 @@ function App() {
                 />
                 <Bucket
                   id="metrics"
-                  title="Metrics"
+                  title={t("buckets.metrics")}
                   items={config.metrics.map((metric) => ({
                     id: metric.fieldId,
                     label: field(metric.fieldId)?.label || metric.fieldId,
@@ -2530,6 +3028,7 @@ function App() {
                   dataset={config.chartType === "rolling-forecast" ? rollingFilterDataset : dataset}
                   config={config}
                   dispatch={dispatch}
+                  metadataService={analyticalMetadataRef.current || undefined}
                 />
                 <PageFilters
                   page={page}
@@ -2545,6 +3044,7 @@ function App() {
                   onRemoveFilter={removePageFilter}
                   rolling={config.chartType === "rolling-forecast"}
                   onFilterScope={setRollingFilterScope}
+                  filterOptions={analyticalFilterOptions}
                   defaults
                 />
                 {!specializedChart(config.chartType) && (
@@ -2601,7 +3101,7 @@ function App() {
                   const candidate = { ...config, chartType },
                     disabled = specializedChart(chartType)
                       ? !chartTypeCompatible(dataset, config, chartType)
-                      : validateConfig(dataset, candidate).length > 0;
+                      : validateConfig(dataset, candidate, DATASETS).length > 0;
                   return (
                     <button
                       {...ui(UI_IDS.builder.chartType(type.id))}
@@ -2610,7 +3110,7 @@ function App() {
                       aria-disabled={disabled}
                       title={
                         disabled
-                          ? validateConfig(dataset, candidate).join("; ")
+                          ? validateConfig(dataset, candidate, DATASETS).join("; ")
                           : type.hint
                       }
                       onClick={() =>
@@ -2633,6 +3133,7 @@ function App() {
             )}
           </aside>}
         </main>
+        </>}
       </div>
     </DndContext>
   );

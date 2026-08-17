@@ -1,3 +1,46 @@
+hierarchies:
+  YQMD:
+    name: YQMD
+    label: Year, Quarter, Month, Day
+    default_level: MONTH
+    leaf_level: DAY
+    levels:
+      - key: YEAR
+        label: Year
+      - key: QUARTER
+        label: Quarter
+      - key: MONTH
+        label: Month
+      - key: DAY
+        label: Day
+  YQHMD:
+    name: YQHMD
+    label: Year, Half-Year, Quarter, Month, Day
+    default_level: MONTH
+    leaf_level: DAY
+    levels:
+      - key: YEAR
+        label: Year
+      - key: HALF_YEAR
+        label: Half-Year
+      - key: QUARTER
+        label: Quarter
+      - key: MONTH
+        label: Month
+      - key: DAY
+        label: Day
+  YQM:
+    name: YQM
+    label: Year, Quarter, Month
+    default_level: MONTH
+    leaf_level: MONTH
+    levels:
+      - key: YEAR
+        label: Year
+      - key: QUARTER
+        label: Quarter
+      - key: MONTH
+        label: Month
 frontend_catalog:
   groups:
     dimension: Аналитики
@@ -9,394 +52,243 @@ frontend_catalog:
     measure:
       data_type: number
       unit: currency
-      aggregations: [SUM, AVG, MIN, MAX, COUNT]
-
-business_objects:
-  contracts:
-    title: Contracts
-    default_source: epm
-    epm:
-      cube: in_out_doc
-      dimensions:
-        version: veb_version
-        scenario: veb_scenario
-        document:
-          field: veb_doc_num
-          normalizer: document_id
-        product: veb_product
-        date:
-          field: 0date
-          input_formats: [YYYYMMDD, YYYY-MM-DD, YYYY.MM.DD]
-          output_format: YYYYMMDD
-      measures:
-        loan: loan
-        debt: debt
-        duration_years: dur_years
-        spread: spread
-        full_spread: spread_1
-        initial_key_rate: init_key
-        key_rate_drop_per_quarter: drop_q
-        reserve_rate: reserve_rate
-        initial_interest_requirement: init_interest_req
-        rate: rate
-        initial_fair_value: init_fv
-        ending_fair_value: end_fv
-        market_rate: market_rate
-        rate_duration: rate_dur
-        avg_rate: avg_rate
-        percent: percent
-        total_received: total_received
-
-  # payment_schedule:
-  #   title: Payment schedule
-  #   default_source: epm
-  #   epm:
-  #     cube: payment_schedule
-  #     dimensions:
-  #       version: veb_version
-  #       scenario: veb_scenario
-  #       document:
-  #         field: veb_doc_num
-  #         normalizer: document_id
-  #       product: veb_product
-  #       payment_number: veb_payment_number
-  #       date: 0date
-  #     measures:
-  #       key_rate: key_rate
-  #       loan_rate: loan_rate
-  #       balance: balance
-  #       principal_payment: principal_payment
-  #       interest: interest
-  #       total_payment: total_payment
-  #       effective_value: eff_value
-  #       depreciation: depreciation
-  #       reserve: reserve
-  #       accrued_interest: interest_prev
-  #       one_time_payment: onetime_pay
-
-  contract_tranches:
-    title: Contract tranches
-    default_source: epm
-    epm:
-      cube: in_out_tranche
-      dimensions:
-        version: veb_version
-        scenario: veb_scenario
-        product: veb_product
-        document:
-          field: veb_doc_num
-          normalizer: document_id
-        tranche: veb_tranche
-        date:
-          field: 0date
-          input_formats: [YYYYMMDD, YYYY-MM-DD, YYYY.MM.DD]
-          output_format: YYYYMMDD
-      measures:
-        loan: loan
-        duration_years: dur_years
-        initial_key_rate: init_key
-        spread: spread
-        fixed_rate: fix_rate
-        activation_period: activation_period
-        rate_type: rate_type
-
-  key_rate:
-    title: Фактическая КС
-    default_source: epm
-    epm:
-      cube: fin_key_rate
-      dimensions:
-        date:
-          field: 0date
-          title: Дата
-          data_type: date
-          unit: date
-          granularity: day
-          hierarchies:
-            - id: YQMD
-              name: YQMD
-              label: Year, Quarter, Month, Day
-              default_level: MONTH
-              leaf_level: DAY
-              levels:
-                - { key: YEAR, label: Year }
-                - { key: QUARTER, label: Quarter }
-                - { key: MONTH, label: Month }
-                - { key: DAY, label: Day }
-          input_formats: [YYYYMMDD, YYYY-MM-DD, YYYY.MM.DD]
-          output_format: YYYYMMDD
-      measures:
-        key_rate: { field: key_rate, title: Ключевая ставка, unit: percent }
-        loan_rate: { field: loan_rate, title: Ставка кредита, unit: percent }
-
-  key_rate_forecast:
-    title: Прогнозная КС
-    default_source: epm
-    epm:
-      cube: fin_key_rate_frc
-      dimensions:
-        version: { field: fin_version, title: Версия }
-        scenario: { field: fin_scenario, title: Сценарий }
-        calmonth:
-          field: 0calmonth
-          title: Месяц
-          data_type: date
-          unit: date
-          granularity: month
-          hierarchies:
-            - id: YQHMD
-              name: YQHMD
-              label: Year, Half-Year, Quarter, Month, Day
-              default_level: MONTH
-              leaf_level: DAY
-              levels:
-                - { key: YEAR, label: Year }
-                - { key: HALF_YEAR, label: Half-Year }
-                - { key: QUARTER, label: Quarter }
-                - { key: MONTH, label: Month }
-                - { key: DAY, label: Day }
-          input_formats: [YYYYMM]
-          output_format: YYYYMM
-      measures:
-        key_rate: { field: key_rate, title: Ключевая ставка, unit: percent }
-        loan_rate: { field: loan_rate, title: Ставка кредита, unit: percent }
-        low_rate: { field: low_rate, title: Ключевая ставка нижняя граница, unit: percent }
-        upper_rate: { field: upper_rate, title: Ключевая ставка верхняя граница, unit: percent }
-        
-
-  product_parameters:
-    title: Макропараметры по продуктам
-    default_source: epm
-    epm:
-      cube: fin_macro
-      dimensions:
-        version: { field: fin_version, title: Версия }
-        scenario: { field: fin_scenario, title: Сценарий }
-        product: { field: fin_product, title: Продукт }
-      measures:
-        rw_loan: { field: rw_loan, title: Риск-вес ссуды, unit: percent }
-        rw_non_revolving_credit_line: { field: rw_norev_credit_line, title: Риск-вес НКЛ, unit: percent }
-        fin_leverage_loan_ratio: { field: fin_leverage_loan_ratio, title: Коэффициент финансового рычага ссуды, unit: percent }
-        fin_leverage_non_revolving_credit_line_ratio: { field: fin_leverage_norev_credit_line_ratio, title: Коэффициент финансового рычага НКЛ, unit: percent }
-
-  reporting_forms:
-    title: Отчетность
-    default_source: epm
-    epm:
-      cube: fin_reports
-      dimensions:
-        version: { field: fin_version, title: Версия }
-        scenario: { field: fin_scenario, title: Сценарий }
-        document: { field: fin_doc_num, title: Договор }
-        account: { field: fin_acc, title: Статья, reference: fin_acc }
-        calmonth:
-          field: 0calmonth
-          title: Месяц
-          data_type: date
-          unit: date
-          granularity: month
-          input_formats: [YYYYMM]
-          output_format: YYYYMM
-      measures:
-        value: { field: value, title: Значение, unit: currency }
-
-  threshold_assessment:
-    title: Оценка KPI относительно плана
-    default_source: epm
-    epm:
-      cube: demo_threshold_assessment
-      dimensions:
-        period:
-          field: period
-          title: Период
-          data_type: date
-          unit: date
-          granularity: month
-          input_formats: [YYYYMM]
-          output_format: YYYYMM
-        metric: { field: metric_key, title: Показатель }
-        reference_type:
-          field: reference_type
-          title: Тип сравнения
-          members:
-            PLAN: { title: План }
-      measures:
-        actual: { field: actual_value, title: Фактические расходы, unit: currency }
-        reference: { field: reference_value, title: Плановые расходы, unit: currency }
-
-  rolling_key_rate_analysis:
-    title: Консенсус-прогноз ключевой ставки
-    default_source: epm
-    epm:
-      cube: demo_rolling_key_rate
-      dimensions:
-        observation_date:
-          field: observation_date
-          title: Дата наблюдения
-          data_type: date
-          unit: date
-          granularity: day
-          input_formats: [YYYYMMDD]
-          output_format: YYYYMMDD
-        forecast_target_date:
-          field: forecast_target_date
-          title: Целевая дата
-          data_type: date
-          unit: date
-          granularity: day
-          input_formats: [YYYYMMDD]
-          output_format: YYYYMMDD
-        horizon_unit: { field: horizon_unit, title: Единица горизонта }
-        forecast_version: { field: forecast_version, title: Версия прогноза }
-      measures:
-        actual_value: { field: actual_value, title: Фактическая ключевая ставка, unit: percent }
-        forecast_value: { field: forecast_value, title: Средний прогноз, unit: percent }
-        lower_bound: { field: lower_bound, title: Нижняя граница, unit: percent }
-        upper_bound: { field: upper_bound, title: Верхняя граница, unit: percent }
-        horizon_value: { field: horizon_value, title: Горизонт, unit: count }
-
-  pnl_waterfall_model:
-    title: P&L Breakdown
-    default_source: epm
-    epm:
-      cube: demo_pnl_waterfall
-      dimensions:
-        period:
-          field: period
-          title: Период
-          data_type: date
-          unit: date
-          granularity: month
-          input_formats: [YYYYMM]
-          output_format: YYYYMM
-        scenario:
-          field: scenario
-          title: Сценарий
-          members:
-            FCT: { title: Факт, time_role: actual }
-        step:
-          field: step_key
-          title: Статья P&L
-          members:
-            revenue: { title: Выручка }
-            cost_of_revenue: { title: Себестоимость }
-            gross_profit: { title: Валовая прибыль }
-            operating_expenses: { title: Операционные расходы }
-            ebitda: { title: EBITDA }
-            depreciation: { title: Амортизация }
-            ebit: { title: EBIT }
-            interest: { title: Процентные расходы }
-            tax: { title: Налог }
-            net_income: { title: Чистая прибыль }
-      measures:
-        amount: { field: amount, title: Сумма, unit: currency }
-
-  contract_parameters:
-    title: Параметры договора
-    default_source: epm
-    epm:
-      cube: fin_doc_params
-      dimensions:
-        version: { field: fin_version, title: Версия }
-        scenario: { field: fin_scenario, title: Сценарий }
-        document: { field: fin_doc_num, title: Договор }
-        product: { field: fin_product, title: Продукт }
-        date:
-          field: 0date
-          title: Дата
-          data_type: date
-          unit: date
-          granularity: day
-          input_formats: [YYYYMMDD, YYYY-MM-DD, YYYY.MM.DD]
-          output_format: YYYYMMDD
-      measures:
-        loan: { field: loan, title: Выдача, unit: currency }
-        duration_years: { field: dur_years, title: "Срок, лет", unit: count }
-        spread: { field: spread, title: Спред, unit: percent }
-        loan_reserve_ratio: { field: loan_reserve_ratio, title: Коэффициент резерва ссуды, unit: percent }
-        non_revolving_credit_line_ratio: { field: norev_cl_reserve_ratio, title: Коэффициент резерва НКЛ, unit: percent }
-        rate: { field: rate, title: Ставка договора, unit: percent }
-        capitalization_years: { field: cap_years, title: "Срок капитализации, лет", unit: count }
-
-  payment_schedule:
-    title: График платежей
-    default_source: epm
-    epm:
-      cube: fin_payment_schedule
-      dimensions:
-        version: { field: fin_version, title: Версия }
-        scenario: { field: fin_scenario, title: Сценарий }
-        document: { field: fin_doc_num, title: Договор }
-        payment_number: { field: fin_payment_number, title: Номер платежа }
-        date:
-          field: 0date
-          title: Дата
-          data_type: date
-          unit: date
-          granularity: day
-          input_formats: [YYYYMMDD, YYYY-MM-DD, YYYY.MM.DD]
-          output_format: YYYYMMDD
-      measures:
-        key_rate: { field: key_rate, title: Ключевая ставка, unit: percent }
-        spread: { field: spread, title: Спред, unit: percent }
-        fixed_rate: { field: fix_rate, title: Фиксированная ставка, unit: percent }
-        balance: { field: balance, title: Остаток на начало, unit: currency }
-        loan: { field: loan, title: Выдача, unit: currency }
-        payment: { field: payment, title: Погашение, unit: currency }
-        balance_at_date: { field: balance_at_date, title: Остаток на дату, unit: currency }
-        commissions_paid: { field: commissions_paid, title: Уплаченные комиссии, unit: currency }
-        commissions_received: { field: commissions_received, title: Полученные комиссии, unit: currency }
-        rate: { field: rate, title: Ставка договора, unit: percent }
-        avg_balance: { field: avg_balance, title: Средний объем, unit: currency }
-        interest_accrued: { field: interest_accrued, title: Начисленные проценты, unit: currency }
-        ifrs_scope: { field: ifrs_scope, title: Объем МСФО, unit: currency }
-        paid_interest: { field: paid_interest, title: Уплаченные проценты, unit: currency }
-        impairment_stage: { field: impairment_stage, title: Этап обесценения, unit: currency }
-        loan_reserve_ratio: { field: loan_reserve_ratio, title: Коэффициент резерва ссуды, unit: percent }
-        loan_reserve: { field: loan_reserve, title: Резерв ссуды, unit: currency }
-        non_revolving_credit_line_ratio: { field: norev_cl_reserve_ratio, title: Коэффициент резерва НКЛ, unit: percent }
-        non_revolving_credit_line: { field: norev_cl_reserve, title: Резерв НКЛ, unit: currency }
-        losses_previous_periods: { field: losses_prev_periods, title: Убытки прошлых периодов, unit: currency }
-        change_loan_reserve: { field: change_loan_reserve, title: Изменение резерва ссуды, unit: currency }
-        change_non-revolving_credit_line_reserve: { field: change_norev_cl_reserve, title: Изменение резерва НКЛ, unit: currency }
-        rw_loan: { field: rw_loan, title: Риск-вес ссуды, unit: percent }
-        rwa_loan: { field: rwa_loan, title: RWA ссуды, unit: currency }
-        rw_non-revolving_credit_line: { field: rw_norev_credit_line, title: Риск-вес НКЛ, unit: percent }
-        rwa_non-revolving_credit_line: { field: rwa_norev_credit_line, title: RWA НКЛ, unit: currency }
-        fin_leverage_loan_ratio: { field: fin_leverage_loan_ratio, title: Коэффициент финансового рычага ссуды, unit: percent }
-        fin_leverage_loan: { field: fin_leverage_loan, title: Финансовый рычаг ссуды, unit: currency }
-        fin_leverage_non-revolving_credit_line_ratio: { field: fin_leverage_norev_credit_line_ratio, title: Коэффициент финансового рычага НКЛ, unit: percent }
-        fin_leverage_non-revolving_credit_line: { field: fin_leverage_norev_credit_line, title: Финансовый рычаг НКЛ, unit: currency }
-
-frontend_datasets:
+      aggregations:
+        - SUM
+        - AVG
+        - MIN
+        - MAX
+        - COUNT
+datasets:
   credit_lifecycle:
     business_object: payment_schedule
     title: Кредитный lifecycle
     description: Дневной plan/fact/forecast расчет по договорам
-    field_overrides:
-      0date:
-        semantic_role: date
+    source:
+      type: csv
+      url: /data/Выгрузка%20и%20ABC-системы%20на%20дату.csv
+      header: true
+    cube: fin_payment_schedule
+    fields:
+      fin_version:
+        field: fin_version
+        title: Версия
         kind: dimension
+        semantic_role: version
+      fin_scenario:
+        field: fin_scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+      fin_doc_num:
+        field: fin_doc_num
+        title: Договор
+        kind: dimension
+        semantic_role: document
+      fin_payment_number:
+        field: fin_payment_number
+        title: Номер платежа
+        kind: dimension
+        semantic_role: payment_number
+      0date:
+        field: 0date
         title: Дата
         data_type: date
         unit: date
         granularity: day
-        input_formats: [YYYYMMDD]
+        input_formats:
+          - YYYYMMDD
         output_format: YYYYMMDD
+        kind: dimension
+        semantic_role: date
         hierarchies:
-          - id: YQMD
-            name: YQMD
-            label: Year, Quarter, Month, Day
-            default_level: MONTH
-            leaf_level: DAY
-            levels:
-              - { key: YEAR, label: Year }
-              - { key: QUARTER, label: Quarter }
-              - { key: MONTH, label: Month }
-              - { key: DAY, label: Day }
+          - YQMD
+        temporal_key: calendar
+      key_rate:
+        field: key_rate
+        title: Ключевая ставка
+        unit: percent
+        kind: measure
+        semantic_role: key_rate
+      spread:
+        field: spread
+        title: Спред
+        unit: percent
+        kind: measure
+        semantic_role: spread
+      fix_rate:
+        field: fix_rate
+        title: Фиксированная ставка
+        unit: percent
+        kind: measure
+        semantic_role: fixed_rate
+      balance:
+        field: balance
+        title: Остаток на начало
+        unit: currency
+        kind: measure
+        semantic_role: balance
+      loan:
+        field: loan
+        title: Выдача
+        unit: currency
+        kind: measure
+        semantic_role: loan
+      payment:
+        field: payment
+        title: Погашение
+        unit: currency
+        kind: measure
+        semantic_role: payment
+      balance_at_date:
+        field: balance_at_date
+        title: Остаток на дату
+        unit: currency
+        kind: measure
+        semantic_role: balance_at_date
+      commissions_paid:
+        field: commissions_paid
+        title: Уплаченные комиссии
+        unit: currency
+        kind: measure
+        semantic_role: commissions_paid
+      commissions_received:
+        field: commissions_received
+        title: Полученные комиссии
+        unit: currency
+        kind: measure
+        semantic_role: commissions_received
+      rate:
+        field: rate
+        title: Ставка договора
+        unit: percent
+        kind: measure
+        semantic_role: rate
+      avg_balance:
+        field: avg_balance
+        title: Средний объем
+        unit: currency
+        kind: measure
+        semantic_role: avg_balance
+      interest_accrued:
+        field: interest_accrued
+        title: Начисленные проценты
+        unit: currency
+        kind: measure
+        semantic_role: interest_accrued
+      ifrs_scope:
+        field: ifrs_scope
+        title: Объем МСФО
+        unit: currency
+        kind: measure
+        semantic_role: ifrs_scope
+      paid_interest:
+        field: paid_interest
+        title: Уплаченные проценты
+        unit: currency
+        kind: measure
+        semantic_role: paid_interest
+      impairment_stage:
+        field: impairment_stage
+        title: Этап обесценения
+        unit: currency
+        kind: measure
+        semantic_role: impairment_stage
+      loan_reserve_ratio:
+        field: loan_reserve_ratio
+        title: Коэффициент резерва ссуды
+        unit: percent
+        kind: measure
+        semantic_role: loan_reserve_ratio
+      loan_reserve:
+        field: loan_reserve
+        title: Резерв ссуды
+        unit: currency
+        kind: measure
+        semantic_role: loan_reserve
+      norev_cl_reserve_ratio:
+        field: norev_cl_reserve_ratio
+        title: Коэффициент резерва НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: non_revolving_credit_line_ratio
+      norev_cl_reserve:
+        field: norev_cl_reserve
+        title: Резерв НКЛ
+        unit: currency
+        kind: measure
+        semantic_role: non_revolving_credit_line
+      losses_prev_periods:
+        field: losses_prev_periods
+        title: Убытки прошлых периодов
+        unit: currency
+        kind: measure
+        semantic_role: losses_previous_periods
+      change_loan_reserve:
+        field: change_loan_reserve
+        title: Изменение резерва ссуды
+        unit: currency
+        kind: measure
+        semantic_role: change_loan_reserve
+      change_norev_cl_reserve:
+        field: change_norev_cl_reserve
+        title: Изменение резерва НКЛ
+        unit: currency
+        kind: measure
+        semantic_role: change_non-revolving_credit_line_reserve
+      rw_loan:
+        field: rw_loan
+        title: Риск-вес ссуды
+        unit: percent
+        kind: measure
+        semantic_role: rw_loan
+      rwa_loan:
+        field: rwa_loan
+        title: RWA ссуды
+        unit: currency
+        kind: measure
+        semantic_role: rwa_loan
+      rw_norev_credit_line:
+        field: rw_norev_credit_line
+        title: Риск-вес НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: rw_non-revolving_credit_line
+      rwa_norev_credit_line:
+        field: rwa_norev_credit_line
+        title: RWA НКЛ
+        unit: currency
+        kind: measure
+        semantic_role: rwa_non-revolving_credit_line
+      fin_leverage_loan_ratio:
+        field: fin_leverage_loan_ratio
+        title: Коэффициент финансового рычага ссуды
+        unit: percent
+        kind: measure
+        semantic_role: fin_leverage_loan_ratio
+      fin_leverage_loan:
+        field: fin_leverage_loan
+        title: Финансовый рычаг ссуды
+        unit: currency
+        kind: measure
+        semantic_role: fin_leverage_loan
+      fin_leverage_norev_credit_line_ratio:
+        field: fin_leverage_norev_credit_line_ratio
+        title: Коэффициент финансового рычага НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: fin_leverage_non-revolving_credit_line_ratio
+      fin_leverage_norev_credit_line:
+        field: fin_leverage_norev_credit_line
+        title: Финансовый рычаг НКЛ
+        unit: currency
+        kind: measure
+        semantic_role: fin_leverage_non-revolving_credit_line
     event_projection:
       date_field: 0date
-      partition_by: [fin_version, fin_scenario, fin_doc_num]
+      partition_by:
+        - fin_version
+        - fin_scenario
+        - fin_doc_num
       comment_source: Комментарии к событиям.csv
       categories:
         loan:
@@ -421,139 +313,652 @@ frontend_datasets:
     business_object: contract_parameters
     title: Условия договоров
     description: Параметры кредитных линий
+    source:
+      type: csv
+      url: /data/Условия%20по%20кредитным%20линиям.csv
+      header: true
+    cube: fin_doc_params
+    fields:
+      fin_version:
+        field: fin_version
+        title: Версия
+        kind: dimension
+        semantic_role: version
+      fin_scenario:
+        field: fin_scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+      fin_doc_num:
+        field: fin_doc_num
+        title: Договор
+        kind: dimension
+        semantic_role: document
+      fin_product:
+        field: fin_product
+        title: Продукт
+        kind: dimension
+        semantic_role: product
+      0date:
+        field: 0date
+        title: Дата
+        data_type: date
+        unit: date
+        granularity: day
+        input_formats:
+          - YYYYMMDD
+          - YYYY-MM-DD
+          - YYYY.MM.DD
+        output_format: YYYYMMDD
+        kind: dimension
+        semantic_role: date
+        temporal_key: calendar
+      loan:
+        field: loan
+        title: Выдача
+        unit: currency
+        kind: measure
+        semantic_role: loan
+      dur_years:
+        field: dur_years
+        title: Срок, лет
+        unit: count
+        kind: measure
+        semantic_role: duration_years
+      spread:
+        field: spread
+        title: Спред
+        unit: percent
+        kind: measure
+        semantic_role: spread
+      loan_reserve_ratio:
+        field: loan_reserve_ratio
+        title: Коэффициент резерва ссуды
+        unit: percent
+        kind: measure
+        semantic_role: loan_reserve_ratio
+      norev_cl_reserve_ratio:
+        field: norev_cl_reserve_ratio
+        title: Коэффициент резерва НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: non_revolving_credit_line_ratio
+      rate:
+        field: rate
+        title: Ставка договора
+        unit: percent
+        kind: measure
+        semantic_role: rate
+      cap_years:
+        field: cap_years
+        title: Срок капитализации, лет
+        unit: count
+        kind: measure
+        semantic_role: capitalization_years
   key_rate_actual:
     business_object: key_rate
     title: Фактическая ключевая ставка
     description: Дневной фактический ряд
+    source:
+      type: csv
+      url: /data/Фактическая%20ключевая%20ставка.csv
+      header: true
+    fields:
+      0date:
+        kind: dimension
+        semantic_role: date
+        title: Дата
+        data_type: date
+        unit: date
+        granularity: day
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMMDD
+        hierarchy: YQMD
+        field: 0date
+        temporal_key: calendar
+      key_rate:
+        kind: measure
+        title: Ключевая ставка
+        unit: percent
+        field: key_rate
+      loan_rate:
+        kind: measure
+        title: Ставка кредита
+        unit: percent
+        field: loan_rate
+    cube: fin_key_rate
   key_rate_forecast:
     business_object: key_rate_forecast
     title: Прогноз ключевой ставки
     description: BASE и OPTM по месяцам
+    source:
+      type: csv
+      url: /data/Прогноз%20ключевой%20ставки.csv
+      delimiter: ;
+      header: true
+    fields:
+      fin_version:
+        kind: dimension
+        semantic_role: version
+        title: Версия
+        field: fin_version
+      fin_scenario:
+        kind: dimension
+        semantic_role: scenario
+        title: Сценарий
+        field: fin_scenario
+      0calmonth:
+        kind: dimension
+        semantic_role: calmonth
+        title: Месяц
+        data_type: date
+        unit: date
+        granularity: month
+        input_formats:
+          - YYYYMM
+        output_format: YYYYMM
+        hierarchy: YQHMD
+        field: 0calmonth
+        temporal_key: calendar
+      key_rate:
+        kind: measure
+        title: Ключевая ставка
+        unit: percent
+        field: key_rate
+      loan_rate:
+        kind: measure
+        title: Ставка кредита
+        unit: percent
+        field: loan_rate
+      low_rate:
+        kind: measure
+        title: Ключевая ставка нижняя граница
+        unit: percent
+        field: low_rate
+      upper_rate:
+        kind: measure
+        title: Ключевая ставка верхняя граница
+        unit: percent
+        field: upper_rate
+    cube: fin_key_rate_frc
   product_macro:
     business_object: product_parameters
     title: Макроусловия продуктов
     description: RW и leverage ratios
-  financial_reporting:
-    business_object: reporting_forms
-    title: Финансовая отчетность
-    description: Производная витрина A3/A3.1/L12/PL1/PL4/PL13
-    badge: Derived mock
-    field_aliases:
-      period: 0calmonth
-    field_overrides:
-      period:
-        semantic_role: calmonth
+    source:
+      type: csv
+      url: /data/Макроусловия%20по%20типу%20кредитного%20продукта.csv
+      header: true
+    cube: fin_macro
+    fields:
+      fin_version:
+        field: fin_version
+        title: Версия
         kind: dimension
-        title: Период
-        data_type: date
-        unit: date
-        granularity: month
-        hierarchies:
-          - id: YQM
-            name: YQM
-            label: Year, Quarter, Month
-            default_level: MONTH
-            leaf_level: MONTH
-            levels:
-              - { key: YEAR, label: Year }
-              - { key: QUARTER, label: Quarter }
-              - { key: MONTH, label: Month }
-        input_formats: [YYYYMM]
-        output_format: YYYYMM
-  writecube_fin_reports:
-    business_object: reporting_forms
-    title: Финансовый куб WriteCube
-    description: Статьи финансовой отчетности по периодам, версиям и сценариям
-    badge: WriteCube CSV
+        semantic_role: version
+      fin_scenario:
+        field: fin_scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+      fin_product:
+        field: fin_product
+        title: Продукт
+        kind: dimension
+        semantic_role: product
+      rw_loan:
+        field: rw_loan
+        title: Риск-вес ссуды
+        unit: percent
+        kind: measure
+        semantic_role: rw_loan
+      rw_norev_credit_line:
+        field: rw_norev_credit_line
+        title: Риск-вес НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: rw_non_revolving_credit_line
+      fin_leverage_loan_ratio:
+        field: fin_leverage_loan_ratio
+        title: Коэффициент финансового рычага ссуды
+        unit: percent
+        kind: measure
+        semantic_role: fin_leverage_loan_ratio
+      fin_leverage_norev_credit_line_ratio:
+        field: fin_leverage_norev_credit_line_ratio
+        title: Коэффициент финансового рычага НКЛ
+        unit: percent
+        kind: measure
+        semantic_role: fin_leverage_non_revolving_credit_line_ratio
   threshold_finance:
     business_object: threshold_assessment
     title: Контроль расходов Fact / Plan
     description: Оценка фактических расходов относительно плана и порогов
-    badge: Demo CSV
-  rolling_key_rate:
-    business_object: rolling_key_rate_analysis
-    title: Rolling forecast ключевой ставки
-    description: История факта и 12-месячный консенсус аналитиков
-    badge: Demo CSV
-  pnl_waterfall:
-    business_object: pnl_waterfall_model
-    title: P&L Breakdown
-    description: Обычный отчёт; последовательность Bridge хранится в конфигурации графика
-    badge: Demo CSV
-  key_rate_scenarios:
-    business_object: key_rate_forecast
-    title: "Ставки: факт и сценарии"
-    description: Объединенный Actual / BASE / OPTM
-    badge: Derived mock
-    field_overrides:
+    source:
+      type: csv
+      url: /data/threshold_comparison_epm.csv
+      header: true
+    cube: demo_threshold_assessment
+    fields:
       period:
-        semantic_role: calmonth
-        kind: dimension
+        field: period
         title: Период
         data_type: date
         unit: date
         granularity: month
-        hierarchies:
-          - id: YQHMD
-            name: YQHMD
-            label: Year, Half-Year, Quarter, Month, Day
-            default_level: MONTH
-            leaf_level: MONTH
-            levels:
-              - { key: YEAR, label: Year }
-              - { key: HALF_YEAR, label: Half-Year }
-              - { key: QUARTER, label: Quarter }
-              - { key: MONTH, label: Month }
-          - id: YQM
-            name: YQM
-            label: Year, Quarter, Month
-            default_level: MONTH
-            leaf_level: MONTH
-            levels:
-              - { key: YEAR, label: Year }
-              - { key: QUARTER, label: Quarter }
-              - { key: MONTH, label: Month }
-        input_formats: [YYYYMM]
+        input_formats:
+          - YYYYMM
         output_format: YYYYMM
-      scenario_series:
-        semantic_role: scenario
         kind: dimension
-        title: Сценарий ставки
-        data_type: string
-        unit: text
+        semantic_role: period
+        temporal_key: calendar
+      metric_key:
+        field: metric_key
+        title: Показатель
+        kind: dimension
+        semantic_role: metric
+      reference_type:
+        field: reference_type
+        title: Тип сравнения
         members:
-          FCT: { title: Факт, time_role: actual }
-          BASE: { title: Базовый прогноз, time_role: forecast }
-          OPTM: { title: Оптимистичный прогноз, time_role: forecast }
-
-
-references:
-  # veb_product:
-  #   title: Product reference
-  #   key: key
-  # dim_costcenter:
-  #   title: Cost center reference
-  #   key: key
-  fin_acc:
-    title: Статья # Account reference
-    source: data/reference_store/sandbox/fin_acc.csv
-    key: "Ключ (ID)"
+          PLAN:
+            title: План
+        kind: dimension
+        semantic_role: reference_type
+      actual_value:
+        field: actual_value
+        title: Фактические расходы
+        unit: currency
+        kind: measure
+        semantic_role: actual
+      reference_value:
+        field: reference_value
+        title: Плановые расходы
+        unit: currency
+        kind: measure
+        semantic_role: reference
+  rolling_key_rate:
+    business_object: rolling_key_rate_analysis
+    title: Rolling forecast ключевой ставки
+    description: История факта и 12-месячный консенсус аналитиков
+    source:
+      type: csv
+      url: /data/rolling_forecast_key_rate.csv
+      header: true
+    cube: demo_rolling_key_rate
     fields:
-      text: { column: "Текст (TXT)", title: Наименование }
-      acc_type: { column: acc_type, title: Тип статьи }
+      observation_date:
+        field: observation_date
+        title: Дата наблюдения
+        data_type: date
+        unit: date
+        granularity: day
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMMDD
+        kind: dimension
+        semantic_role: observation_date
+        temporal_key: calendar
+      forecast_target_date:
+        field: forecast_target_date
+        title: Целевая дата
+        data_type: date
+        unit: date
+        granularity: day
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMMDD
+        kind: dimension
+        semantic_role: forecast_target_date
+        temporal_key: calendar
+      horizon_unit:
+        field: horizon_unit
+        title: Единица горизонта
+        kind: dimension
+        semantic_role: horizon_unit
+      forecast_version:
+        field: forecast_version
+        title: Версия прогноза
+        kind: dimension
+        semantic_role: forecast_version
+      actual_value:
+        field: actual_value
+        title: Фактическая ключевая ставка
+        unit: percent
+        kind: measure
+        semantic_role: actual_value
+      forecast_value:
+        field: forecast_value
+        title: Средний прогноз
+        unit: percent
+        kind: measure
+        semantic_role: forecast_value
+      lower_bound:
+        field: lower_bound
+        title: Нижняя граница
+        unit: percent
+        kind: measure
+        semantic_role: lower_bound
+      upper_bound:
+        field: upper_bound
+        title: Верхняя граница
+        unit: percent
+        kind: measure
+        semantic_role: upper_bound
+      horizon_value:
+        field: horizon_value
+        title: Горизонт
+        unit: count
+        kind: measure
+        semantic_role: horizon_value
+  pnl_waterfall:
+    business_object: pnl_waterfall_model
+    title: P&L Breakdown
+    description: Обычный отчёт; последовательность Bridge хранится в конфигурации графика
+    source:
+      type: csv
+      url: /data/pnl_waterfall.csv
+      header: true
+    cube: demo_pnl_waterfall
+    fields:
+      period:
+        field: period
+        title: Период
+        data_type: date
+        unit: date
+        granularity: month
+        input_formats:
+          - YYYYMM
+        output_format: YYYYMM
+        kind: dimension
+        semantic_role: period
+        temporal_key: calendar
+      scenario:
+        field: scenario
+        title: Сценарий
+        members:
+          FCT:
+            title: Факт
+            time_role: actual
+        kind: dimension
+        semantic_role: scenario
+      step_key:
+        field: step_key
+        title: Статья P&L
+        members:
+          revenue:
+            title: Выручка
+          cost_of_revenue:
+            title: Себестоимость
+          gross_profit:
+            title: Валовая прибыль
+          operating_expenses:
+            title: Операционные расходы
+          ebitda:
+            title: EBITDA
+          depreciation:
+            title: Амортизация
+          ebit:
+            title: EBIT
+          interest:
+            title: Процентные расходы
+          tax:
+            title: Налог
+          net_income:
+            title: Чистая прибыль
+        kind: dimension
+        semantic_role: step
+      amount:
+        field: amount
+        title: Сумма
+        unit: currency
+        kind: measure
+        semantic_role: amount
+  writecube_fin_reports:
+    business_object: financial_reporting
+    title: Финансовый куб WriteCube
+    description: Статьи финансовой отчетности по периодам, версиям и сценариям
+    source:
+      type: csv
+      url: /data/WriteCube-95_fin_reports.csv
+      delimiter: ;
+      decimal_separator: ","
+      header: true
+    cube: fin_reports
+    fields:
+      fin_version:
+        field: fin_version
+        title: Версия
+        kind: dimension
+        semantic_role: version
+      fin_scenario:
+        field: fin_scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+      fin_doc_num:
+        field: fin_doc_num
+        title: Договор
+        kind: dimension
+        semantic_role: document
+      fin_acc:
+        field: fin_acc
+        title: Статья
+        reference: fin_acc
+        kind: dimension
+        semantic_role: account
+      0calmonth:
+        field: 0calmonth
+        title: Месяц
+        data_type: date
+        unit: date
+        granularity: month
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMM
+        kind: dimension
+        semantic_role: calmonth
+        temporal_key: calendar
+      value:
+        field: value
+        title: Значение
+        unit: currency
+        kind: measure
+        semantic_role: value
+  key_rate_scenarios:
+    type: composed
+    business_object: key_rate_forecast
+    title: "Ставки: факт и сценарии"
+    description: Объединенный Actual / BASE / OPTM
+    fields:
+      period:
+        kind: dimension
+        semantic_role: date
+        title: Период
+        data_type: date
+        unit: date
+        granularity: day
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMMDD
+        hierarchy: YQMD
+        field: period
+        hierarchies:
+          - YQHMD
+          - YQM
+        temporal_key: calendar
+      key_rate:
+        kind: measure
+        title: Ключевая ставка
+        unit: percent
+        field: key_rate
+      loan_rate:
+        kind: measure
+        title: Ставка кредита
+        unit: percent
+        field: loan_rate
+      scenario_series:
+        kind: dimension
+        semantic_role: scenario
+        title: Сценарий ставки
+        field: scenario_series
+        members:
+          FCT:
+            title: Факт
+            time_role: actual
+          BASE:
+            title: Базовый прогноз
+            time_role: forecast
+          OPTM:
+            title: Оптимистичный прогноз
+            time_role: forecast
+    sources:
+      - dataset: key_rate_actual
+        role: actual
+        mappings:
+          0date: period
+          key_rate: key_rate
+          loan_rate: loan_rate
+        constants:
+          scenario_series: FCT
+      - dataset: key_rate_forecast
+        role: forecast
+        mappings:
+          0calmonth: period
+          key_rate: key_rate
+          loan_rate: loan_rate
+          fin_scenario: scenario_series
+    cube: fin_key_rate_frc
+  financial_reporting:
+    type: composed
+    business_object: financial_reporting
+    title: Финансовая отчетность
+    description: Производная витрина A3/A3.1/L12/PL1/PL4/PL13
+    sources:
+      - dataset: writecube_fin_reports
+        mappings:
+          fin_acc: fin_acc
+          fin_version: fin_version
+          fin_scenario: fin_scenario
+          0calmonth: 0calmonth
+          value: value
+    cube: fin_reports
+    fields:
+      fin_acc:
+        field: fin_acc
+        title: Статья
+        reference: fin_acc
+        kind: dimension
+        semantic_role: account
+      fin_version:
+        field: fin_version
+        title: Версия
+        kind: dimension
+        semantic_role: version
+      fin_scenario:
+        field: fin_scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+      0calmonth:
+        field: 0calmonth
+        title: Месяц
+        data_type: date
+        unit: date
+        granularity: month
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMM
+        kind: dimension
+        semantic_role: calmonth
+        temporal_key: calendar
+      value:
+        field: value
+        title: Значение
+        unit: currency
+        kind: measure
+        semantic_role: value
+  multi_mapping_demo:
+    business_object: multi_mapping_demo
+    title: Демо составного mapping
+    description: Учебная выручка по периодам, регионам, сценариям и версиям
+    source:
+      type: csv
+      url: /data/multi_mapping_demo.csv
+      header: true
+    cube: demo_multi_mapping
+    fields:
+      period:
+        field: period
+        title: Период
+        data_type: date
+        unit: date
+        granularity: month
+        input_formats:
+          - YYYYMMDD
+        output_format: YYYYMM
+        kind: dimension
+        semantic_role: period
+        temporal_key: calendar
+      region:
+        field: region
+        title: Регион
+        kind: dimension
+        semantic_role: region
+        members:
+          MSK:
+            title: Москва
+          SPB:
+            title: Санкт-Петербург
+          EKB:
+            title: Екатеринбург
+      scenario:
+        field: scenario
+        title: Сценарий
+        kind: dimension
+        semantic_role: scenario
+        members:
+          FCT:
+            title: Факт
+          PLN:
+            title: План
+      version:
+        field: version
+        title: Версия
+        kind: dimension
+        semantic_role: version
+      revenue:
+        field: revenue
+        title: Выручка
+        unit: currency
+        kind: measure
+        semantic_role: revenue
+references:
+  fin_acc:
+    title: Статья
+    source: data/reference_store/sandbox/fin_acc.csv
+    key: Ключ (ID)
+    fields:
+      text:
+        column: Текст (TXT)
+        title: Наименование
+      acc_type:
+        column: acc_type
+        title: Тип статьи
   fin_acc_type:
-    title: Тип статьи # Account type reference
+    title: Тип статьи
     source: data/reference_store/sandbox/fin_acc_type.csv
-    key: "Ключ (ID)"
+    key: Ключ (ID)
   fin_doc_num:
-    title: Договор # Contract reference
-    key: "Ключ (ID)"
+    title: Договор
+    key: Ключ (ID)
   fin_product:
-    title: Продукт # Product reference
-    key: "Ключ (ID)"
+    title: Продукт
+    key: Ключ (ID)
   fin_scenario:
-    title: Сценарий # Scenario reference
-    key: "Ключ (ID)"
+    title: Сценарий
+    key: Ключ (ID)
   fin_version:
-    title: Версия # Version reference
-    key: "Ключ (ID)"
+    title: Версия
+    key: Ключ (ID)

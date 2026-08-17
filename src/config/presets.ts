@@ -119,12 +119,13 @@ const bridgeItem = (
   displayLabel: string,
   action: BridgeSequenceAction,
   order: number,
+  measureKey = "value",
 ) => ({
   id: `pnl-${memberKey}`,
   memberKey,
   displayLabel,
-  measureKey: "amount",
-  measureLabel: "Сумма",
+  measureKey,
+  measureLabel: measureKey === "value" ? "Значение" : "Сумма",
   action,
   order,
   enabled: true,
@@ -160,6 +161,9 @@ export const PRESETS: PresetPage[] = [
         ["key_rate"],
         ["scenario_series"],
       ),
+      viewByPresentation: {
+        period: { mode: "hierarchy", activeHierarchyId: "YQHMD", selectedLevelKey: "MONTH" },
+      },
       actualForecast: actualForecast({ enabled: true, splitMode: "series" }),
     },
   },
@@ -180,6 +184,106 @@ export const PRESETS: PresetPage[] = [
     label: "Экспозиция по договорам",
     description: "IFRS scope в структуре портфеля",
     config: base("credit_lifecycle", "pie", ["fin_doc_num"], ["ifrs_scope"]),
+    pageFilters: [
+      { fieldId: "fin_doc_num", kind: "categorical" as const, defaultValue: [] },
+    ],
+  },
+  {
+    id: "demo-mapping-column",
+    label: "Демо mapping · Column",
+    description: "X: период · Series: сценарий · Y: ключевая ставка · Page filter: дата разделения",
+    header: {
+      markdown: "# Column: ключевая ставка по сценариям\n\n**X / View by:** Период · **Series / Stack by:** Сценарий ставки · **Y / Metrics:** Ключевая ставка · **Page filter:** дата разделения",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: {
+      ...base("key_rate_scenarios", "column", ["period"], ["key_rate"], ["scenario_series"]),
+      viewByPresentation: {
+        period: { mode: "hierarchy", activeHierarchyId: "YQHMD", selectedLevelKey: "MONTH" },
+      },
+    },
+  },
+  {
+    id: "demo-mapping-line",
+    label: "Демо mapping · Line",
+    description: "X: период · Series: сценарий · Y: ключевая ставка · Page filter: дата разделения",
+    header: {
+      markdown: "# Line: ключевая ставка по сценариям\n\n**X / View by:** Период · **Series / Stack by:** Сценарий ставки · **Y / Metrics:** Ключевая ставка · **Page filter:** дата разделения",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: {
+      ...base("key_rate_scenarios", "line", ["period"], ["key_rate"], ["scenario_series"]),
+      viewByPresentation: {
+        period: { mode: "hierarchy", activeHierarchyId: "YQHMD", selectedLevelKey: "MONTH" },
+      },
+      actualForecast: actualForecast({ enabled: true, splitMode: "series" }),
+    },
+  },
+  {
+    id: "demo-mapping-pie",
+    label: "Демо mapping · Pie",
+    description: "Sectors: сценарий · Size: ключевая ставка · Page filter: дата разделения",
+    header: {
+      markdown: "# Pie: сумма ставки по сценариям\n\n**Sectors / View by:** Сценарий ставки · **Stack by:** не используется · **Size / Metrics:** Ключевая ставка · **Page filter:** дата разделения",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: base("key_rate_scenarios", "pie", ["scenario_series"], ["key_rate"]),
+  },
+  {
+    id: "demo-mapping-stacked-column",
+    label: "Демо mapping · Stacked Column",
+    description: "X: период · Segments: сценарий · Y: ключевая ставка · Page filter: дата разделения",
+    header: {
+      markdown: "# Stacked Column: ставка по сценариям\n\n**X / View by:** Период · **Segments / Stack by:** Сценарий ставки · **Y / Metrics:** Ключевая ставка · **Page filter:** дата разделения",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: {
+      ...base("key_rate_scenarios", "stacked-column", ["period"], ["key_rate"], ["scenario_series"]),
+      viewByPresentation: {
+        period: { mode: "hierarchy", activeHierarchyId: "YQHMD", selectedLevelKey: "MONTH" },
+      },
+    },
+  },
+  {
+    id: "demo-mapping-combo",
+    label: "Демо mapping · Combo",
+    description: "X: период · Series: сценарий · Y: ключевая + кредитная ставка",
+    header: {
+      markdown: "# Combo: ключевая и кредитная ставка\n\n**X / View by:** Период · **Series / Stack by:** Сценарий ставки · **Y / Metrics:** Ключевая ставка + Ставка кредита · **Page filter:** дата разделения",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: {
+      ...combo("key_rate_scenarios", ["period"], [["key_rate", "column", "left"], ["loan_rate", "line", "right"]]),
+      stackBy: ["scenario_series"],
+      viewByPresentation: {
+        period: { mode: "hierarchy", activeHierarchyId: "YQHMD", selectedLevelKey: "MONTH" },
+      },
+    },
+  },
+  {
+    id: "demo-mapping-multi-dimensions",
+    label: "Демо mapping · Multiple dimensions",
+    description: "X: период + регион · Series: сценарий + версия · Y: выручка",
+    header: {
+      markdown: "# Составные категории и серии\n\n**X / View by:** Период + Регион → `Период · Регион` · **Series / Stack by:** Сценарий + Версия → `Сценарий · Версия` · **Y / Metrics:** Выручка",
+      color: "#1f2933",
+      backgroundColor: "#f7f9fb",
+    },
+    config: base(
+      "multi_mapping_demo",
+      "column",
+      ["period", "region"],
+      ["revenue"],
+      ["scenario", "version"],
+    ),
+    pageFilters: [
+      { fieldId: "region", kind: "categorical" as const, defaultValue: ["MSK", "SPB"] },
+    ],
   },
   {
     id: "risk",
@@ -227,6 +331,7 @@ export const PRESETS: PresetPage[] = [
         fieldId: "period",
         kind: "date-range" as const,
         granularity: "month" as const,
+        temporalKey: "calendar",
         defaultValue: { from: "202604", to: "202604" },
       },
     ],
@@ -266,23 +371,29 @@ export const PRESETS: PresetPage[] = [
     label: "Bridge / Waterfall: P&L",
     description: "От выручки к чистой прибыли",
     config: {
-      ...base("writecube_fin_reports", "waterfall", [], []),
+      ...base("pnl_waterfall", "waterfall", [], []),
       waterfall: {
         ...DEFAULT_WATERFALL_SETTINGS,
-        dimensionKey: "fin_acc",
-        availableMeasureKeys: ["value"],
-        defaultMeasureKey: "value",
+        dimensionKey: "step_key",
+        availableMeasureKeys: ["amount"],
+        defaultMeasureKey: "amount",
         items: [
-          bridgeItem("A3", "Кредиты, предоставленные НКО", "opening", 1),
-          bridgeItem("A3.1", "Резервы по кредитам", "subtract", 2),
-          bridgeItem("L12", "Прочие кредитные требования", "checkpoint", 3),
+          bridgeItem("revenue", "Выручка", "opening", 1, "amount"),
+          bridgeItem("cost_of_revenue", "Себестоимость", "subtract", 2, "amount"),
+          bridgeItem("gross_profit", "Валовая прибыль", "checkpoint", 3, "amount"),
+          bridgeItem("operating_expenses", "Операционные расходы", "subtract", 4, "amount"),
+          bridgeItem("ebitda", "EBITDA", "checkpoint", 5, "amount"),
+          bridgeItem("depreciation", "Амортизация", "subtract", 6, "amount"),
+          bridgeItem("ebit", "EBIT", "checkpoint", 7, "amount"),
+          bridgeItem("interest", "Проценты", "subtract", 8, "amount"),
+          bridgeItem("tax", "Налог", "subtract", 9, "amount"),
+          bridgeItem("net_income", "Чистая прибыль", "checkpoint", 10, "amount"),
         ],
       },
     },
     pageFilters: [
-      { fieldId: "fin_version", kind: "categorical" as const, defaultValue: ["FRC"] },
-      { fieldId: "fin_scenario", kind: "categorical" as const, defaultValue: ["BASE"] },
-      { fieldId: "0calmonth", kind: "date-range" as const, granularity: "month" as const, defaultValue: { from: "202607", to: "202607" } },
+      { fieldId: "scenario", kind: "categorical" as const, defaultValue: ["FCT"] },
+      { fieldId: "period", kind: "date-range" as const, granularity: "month" as const, defaultValue: { from: "202601", to: "202601" } },
     ],
   },
   {

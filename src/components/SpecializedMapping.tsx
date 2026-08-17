@@ -27,10 +27,12 @@ import { useTranslation } from "react-i18next";
 import { DATASETS, FIN_ACCOUNT_DISPLAY, FIN_ACCOUNT_LABELS, referenceRows } from "../data/datasets";
 import { referenceMeta } from "../semantic/businessCatalog";
 import { BuilderSelector } from "./BuilderSelector";
+import type { DatasetMetadataService } from "../analytical/metadata/DatasetMetadataService";
 
 type Props = {
   dataset: Dataset;
   datasets?: Record<string, Dataset>;
+  metadataService?: DatasetMetadataService;
   config: ChartConfig;
   pageFilters?: PageFilterDefinition[];
   onChange: (config: ChartConfig) => void;
@@ -158,24 +160,17 @@ const checkbox = (
   </label>
 );
 
-function ThresholdMapping({ dataset, config, onChange, pageFilters = [] }: Props) {
+function ThresholdMapping({ dataset, config, onChange, pageFilters = [], metadataService }: Props) {
   const { t } = useTranslation("threshold");
+  const [metadataValues, setMetadataValues] = React.useState<string[]>([]);
     const settings =
       config.thresholdComparison || structuredClone(DEFAULT_THRESHOLD_SETTINGS),
     pageFilterFieldIds = new Set(pageFilters.map((filter) => filter.fieldId)),
     dimensions = dataset.fields.filter((field) => field.kind === "dimension" && !pageFilterFieldIds.has(field.id)),
     measures = dataset.fields.filter((field) => field.kind === "measure"),
-    commonRows = dataset.rows.filter((row) => pageFilters.every((filter) => {
-      const raw = String(row[filter.fieldId] ?? "");
-      if (filter.kind === "categorical") return !filter.defaultValue.length || filter.defaultValue.includes(raw);
-      const range = filter.defaultValue;
-      return (!range.from || raw >= range.from) && (!range.to || raw <= range.to);
-    })),
     differentiator = settings.differentiator || { fieldId: null, valueA: null, valueB: null },
     differentiatorField = dimensions.find((field) => field.id === differentiator.fieldId),
-    differentiatorValues = differentiatorField
-      ? [...new Set(commonRows.map((row) => String(row[differentiatorField.id] ?? "")).filter(Boolean))].sort()
-      : [],
+    differentiatorValues = metadataValues,
     patch = (value: Partial<typeof settings>) =>
       onChange({ ...config, thresholdComparison: { ...settings, ...value } }),
     patchZone = (index: number, value: Partial<ThresholdZone>) =>
@@ -191,7 +186,16 @@ function ThresholdMapping({ dataset, config, onChange, pageFilters = [] }: Props
       value: Partial<typeof settings.actual>,
     ) => patch({ [key]: { ...settings[key], ...value } });
   const patchDifferentiator = (value: Partial<typeof differentiator>) =>
-    patch({ differentiator: { ...differentiator, ...value } });
+      patch({ differentiator: { ...differentiator, ...value } });
+  React.useEffect(() => {
+    let cancelled = false;
+    setMetadataValues([]);
+    if (!differentiatorField || !metadataService) return () => { cancelled = true; };
+    metadataService.distinct(dataset.id, differentiatorField.id).then((values) => {
+      if (!cancelled) setMetadataValues(values);
+    }).catch(() => { if (!cancelled) setMetadataValues([]); });
+    return () => { cancelled = true; };
+  }, [dataset.id, differentiatorField?.id, metadataService]);
   return (
     <div {...ui(UI_IDS.threshold.root)} className="specialized-mapping">
       <section className="settings-dataset-binding threshold-dataset-binding"><header><b>{t("dataset")}</b><small>{dataset.label}</small></header><select {...ui("mapping.threshold-comparison.dataset")} value={config.datasetId} onChange={(event) => onChange({ ...config, datasetId: event.target.value as typeof config.datasetId })}>{Object.values(DATASETS).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select><p>{dataset.description}</p></section>
@@ -587,7 +591,7 @@ function RollingMapping({ dataset, config, onChange }: Props) {
   );
 }
 
-function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberChange }: Props & { onCandidateMemberChange?: (memberKey: string) => void }) {
+function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberChange, metadataService }: Props & { onCandidateMemberChange?: (memberKey: string) => void }) {
   const { t } = useTranslation("waterfall");
   const { t: tc } = useTranslation("common");
   const settings =
@@ -596,6 +600,7 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
       onChange({ ...config, waterfall: { ...settings, ...value } });
   const [candidateMember, setCandidateMember] = React.useState(""),
     [draggedId, setDraggedId] = React.useState<string | null>(null),
+    [transactionMemberKeys, setTransactionMemberKeys] = React.useState<string[]>([]),
     dimensions = dataset.fields.filter((field) => field.kind === "dimension"),
     allMeasures = dataset.fields.filter(
       (field) => field.kind === "measure" && !["text", "date"].includes(field.unit),
@@ -617,9 +622,6 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
     referenceAttributeFields: Array<[string, { column: string; title?: string }]> = referenceDefinition?.fields
       ? (Object.entries(referenceDefinition.fields).filter(([field]) => field !== "text") as Array<[string, { column: string; title?: string }]> )
       : [],
-    transactionMemberKeys = new Set(settings.dimensionKey
-      ? dataset.rows.map((row) => String(row[settings.dimensionKey!] ?? "")).filter(Boolean)
-      : []),
     referenceMemberRows = referenceData.filter((row) => {
       const attributeField = memberReference.attributeField,
         attributeValue = memberReference.attributeValue;
@@ -630,7 +632,7 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
     memberKeys = settings.dimensionKey
       ? referenceData.length && referenceKeyColumn
         ? [...new Set(referenceMemberRows.map((row) => String(row[referenceKeyColumn] ?? "")).filter(Boolean))]
-        : [...transactionMemberKeys]
+        : transactionMemberKeys
       : [],
     memberLabel = (key: string) => formatWaterfallMember(
       dataset,
@@ -698,6 +700,15 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
       .sort((a, b) => a.order - b.order),
     terminalId = active.filter((item) => item.action === "checkpoint").at(-1)?.id,
     validation = validateBridgeSequence(dataset, settings);
+  React.useEffect(() => {
+    let cancelled = false;
+    setTransactionMemberKeys([]);
+    if (!settings.dimensionKey || !metadataService) return () => { cancelled = true; };
+    metadataService.distinct(dataset.id, settings.dimensionKey).then((values) => {
+      if (!cancelled) setTransactionMemberKeys(values);
+    }).catch(() => { if (!cancelled) setTransactionMemberKeys([]); });
+    return () => { cancelled = true; };
+  }, [dataset.id, settings.dimensionKey, metadataService]);
   return (
     <div {...ui(UI_IDS.waterfall.editor)} className="specialized-mapping">
       <section className="specialized-settings">
@@ -715,7 +726,7 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
             <BuilderSelector uiId="mapping.waterfall.member-attribute" className="waterfall-neutral-selector" label="" ariaLabel="Атрибут справочника" value={memberReference.attributeField || ""} options={[{ id: "", label: "Без фильтра по атрибуту" }, ...referenceAttributeFields.map(([field, meta]) => ({ id: field, label: meta.title || field }))]} onChange={(value) => patch({ memberReference: { referenceId, attributeField: value || null, attributeValue: null } })} />
             {memberReference.attributeField && <BuilderSelector uiId="mapping.waterfall.member-attribute-value" className="waterfall-neutral-selector" label="" ariaLabel="Значение атрибута" value={memberReference.attributeValue || ""} options={[{ id: "", label: "Все значения" }, ...[...new Set(referenceData.map((row) => String(row[referenceDefinition?.fields?.[memberReference.attributeField!]?.column || memberReference.attributeField!] ?? "")).filter(Boolean))].map((value) => ({ id: value, label: value }))]} onChange={(value) => patch({ memberReference: { ...memberReference, referenceId, attributeValue: value || null } })} />}
           </>}
-          <BuilderSelector uiId="mapping.waterfall.member-selector" className="waterfall-neutral-selector waterfall-member-selector" label="" ariaLabel="Статья для добавления" value={candidateMember} disabled={!settings.dimensionKey} options={[{ id: "", label: "Выберите статью" }, ...memberKeys.map((key) => ({ id: key, label: memberLabel(key), meta: memberType(key) || key, marker: transactionMemberKeys.has(key) ? "transaction" as const : "reference" as const }))]} onChange={(value) => { setCandidateMember(value); onCandidateMemberChange?.(value); }} />
+          <BuilderSelector uiId="mapping.waterfall.member-selector" className="waterfall-neutral-selector waterfall-member-selector" label="" ariaLabel="Статья для добавления" value={candidateMember} disabled={!settings.dimensionKey} options={[{ id: "", label: "Выберите статью" }, ...memberKeys.map((key) => ({ id: key, label: memberLabel(key), meta: memberType(key) || key, marker: transactionMemberKeys.includes(key) ? "transaction" as const : "reference" as const }))]} onChange={(value) => { setCandidateMember(value); onCandidateMemberChange?.(value); }} />
           <button {...ui(UI_IDS.waterfall.addItem)} type="button" disabled={!candidateMember || !measures.length} onClick={addItem}>Добавить строку</button>
         </div>
         <div {...ui(UI_IDS.waterfall.sequence)} className="bridge-sequence" role="table" aria-label="Структура Bridge / Waterfall">
@@ -724,7 +735,10 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
             const unresolvedMember = !memberKeys.includes(item.memberKey),
               unresolvedMeasure = !dataset.fields.some((field) => field.id === item.measureKey),
               terminal = item.id === terminalId;
-            const itemMeasures = measures.filter((field) => dataset.rows.some((row) => String(row[settings.dimensionKey || ""] ?? "") === item.memberKey && row[field.id] !== null && row[field.id] !== undefined && row[field.id] !== "" && Number.isFinite(Number(row[field.id]))));
+            // Availability is metadata-driven. The analytical runtime performs
+            // the actual member/measure aggregation; the editor keeps the full
+            // semantic measure list while that query is loading.
+            const itemMeasures = measures;
             return <div {...ui(UI_IDS.waterfall.sequenceRow(item.id))} className="bridge-sequence-row" role="row" key={item.id} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedId) moveBefore(draggedId, item.id); setDraggedId(null) }}>
               <div className="bridge-reorder"><button type="button" draggable onDragStart={() => setDraggedId(item.id)} onDragEnd={() => setDraggedId(null)} aria-label={`Перетащить ${item.displayLabel}`} title="Перетащите строку">≡</button><button {...ui(UI_IDS.waterfall.reorder(item.id, "up"))} type="button" disabled={index === 0} aria-label={`Переместить ${item.displayLabel} вверх`} onClick={() => move(item.id, -1)}>↑</button><button {...ui(UI_IDS.waterfall.reorder(item.id, "down"))} type="button" disabled={index === settings.items.length - 1} aria-label={`Переместить ${item.displayLabel} вниз`} onClick={() => move(item.id, 1)}>↓</button></div>
               <b>{memberKeys.includes(item.memberKey) ? memberLabel(item.memberKey) : formatWaterfallMember(dataset, settings.dimensionKey, item.memberKey, item.displayLabel)}</b>
@@ -756,13 +770,23 @@ function WaterfallSequenceEditor({ dataset, config, onChange, onCandidateMemberC
   );
 }
 
-function WaterfallSurface({ dataset, config, onChange }: Props) {
+function WaterfallSurface({ dataset, config, onChange, metadataService }: Props) {
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState<ChartConfig | null>(null);
   const [candidateMember, setCandidateMember] = React.useState("");
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const settings = config.waterfall || structuredClone(DEFAULT_WATERFALL_SETTINGS);
+  const [memberCount, setMemberCount] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    setMemberCount(null);
+    if (!metadataService || !settings.dimensionKey) return () => { cancelled = true; };
+    metadataService.distinct(dataset.id, settings.dimensionKey).then((values) => {
+      if (!cancelled) setMemberCount(values.length);
+    }).catch(() => { if (!cancelled) setMemberCount(null); });
+    return () => { cancelled = true; };
+  }, [dataset.id, settings.dimensionKey, metadataService]);
   const dialogDataset = draft?.datasetId
     ? DATASETS[draft.datasetId] || dataset
     : dataset;
@@ -835,7 +859,7 @@ function WaterfallSurface({ dataset, config, onChange }: Props) {
       <div>
         <b>Bridge / Waterfall</b>
         <small {...ui("mapping.waterfall.dimension.meta")}>{settings.dimensionKey ? `Dimension: ${settings.dimensionKey === "fin_acc" ? "Статья (fin_acc)" : settings.dimensionKey}` : "Аналитика не выбрана"}</small>
-        <small {...ui("mapping.waterfall.dataset.meta.summary")}>Dataset: {dataset.label} · {settings.dimensionKey ? new Set(dataset.rows.map((row) => String(row[settings.dimensionKey!] ?? "")).filter(Boolean)).size : 0} кодов</small>
+        <small {...ui("mapping.waterfall.dataset.meta.summary")}>Dataset: {dataset.label} · {settings.dimensionKey ? (memberCount == null ? "…" : memberCount) : 0} кодов</small>
         <small>{active.length} активных строк · {checkpoints.length} контрольных итогов</small>
       </div>
       <button {...ui(UI_IDS.waterfall.settingsOpen)} ref={triggerRef} type="button" className="waterfall-settings-open" onClick={openDialog}>
@@ -851,7 +875,7 @@ function WaterfallSurface({ dataset, config, onChange }: Props) {
             <button {...ui(UI_IDS.waterfall.dialogClose)} type="button" className="waterfall-dialog-close" aria-label="Закрыть настройки" onClick={closeDialog}>×</button>
           </header>
           <div className="waterfall-dialog-body">
-            <WaterfallSequenceEditor dataset={dialogDataset} config={draft} onChange={setDraft} onCandidateMemberChange={setCandidateMember} />
+          <WaterfallSequenceEditor dataset={dialogDataset} metadataService={metadataService} config={draft} onChange={setDraft} onCandidateMemberChange={setCandidateMember} />
           </div>
           <footer className="waterfall-dialog-footer">
             <span {...ui("mapping.waterfall.dialog.dataset-status")}>{dialogDataset.label} · {validateBridgeSequence(dialogDataset, draft.waterfall).blockingErrors.length ? "Исправьте ошибки перед применением" : "Изменения применятся к текущей странице"}</span>

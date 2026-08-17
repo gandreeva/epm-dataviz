@@ -476,7 +476,7 @@ export function buildRollingForecast(
       : vintages.at(-1);
   const selected = requestedSelected || vintages.at(-1);
   if (settings.observationDateMode === "selected" && settings.selectedObservationDate && !requestedSelected && selected) {
-    warnings.push(`Selected vintage ${settings.selectedObservationDate} отсутствует после фильтрации; выбран последний доступный vintage ${selected.observationDate}`);
+    diagnostics.push(`Selected vintage ${settings.selectedObservationDate} отсутствует после фильтрации; выбран последний доступный vintage ${selected.observationDate}`);
   }
   if (diagnostics.length || !selected)
     return { diagnostics: [...new Set(diagnostics)], warnings };

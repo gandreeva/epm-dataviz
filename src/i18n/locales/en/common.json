@@ -12,6 +12,14 @@
     "titleLabel": "Text widget title",
     "emptyTitle": "Text widget"
   },
+  "pageFilters": {
+    "reset": "Reset filters"
+  },
+  "buckets": {
+    "viewBy": "View by",
+    "stackBy": "Stack by",
+    "metrics": "Metrics"
+  },
   "timeHierarchy": {
     "switcherLabel": "Time hierarchy level",
     "levels": {
@@ -21,6 +29,20 @@
       "MONTH": "Month",
       "DAY": "Day"
     }
+  },
+  "calendar": {
+    "selectDate": "Select date",
+    "selectMonth": "Select month",
+    "previousMonth": "Previous month",
+    "nextMonth": "Next month",
+    "previousYear": "Previous year",
+    "nextYear": "Next year",
+    "today": "Today",
+    "close": "Close",
+    "calendarLabel": "Calendar",
+    "months": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+    "monthsShort": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "weekdaysShort": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
   },
   "pivot": {
     "dataset": "Dataset",

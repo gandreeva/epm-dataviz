@@ -1,9 +1,36 @@
-import type{ChartModel,ChartPoint,ChartSeries,SeriesTimeRole}from'../types';
+import type{ChartModel,ChartPoint,ChartSeries,Dataset,SeriesTimeRole,ResolvedActualForecast,ActualForecastSettings}from'../types';
+import { eventTimestamp } from '../events/eventAdapter';
 
 export interface TemporalRenderLine{key:string;series:ChartSeries;role:SeriesTimeRole;legend:boolean}
 export interface TemporalRenderModel{data:ChartPoint[];lines:TemporalRenderLine[]}
 export interface ActualForecastBands{actualEnd:number;forecastStart:number;inside:boolean;showActual:boolean;showForecast:boolean}
 export interface ActualForecastZoneShares{actual:number;forecast:number}
+
+const roleForMember = (dataset: Dataset, series: ChartSeries): SeriesTimeRole | undefined => {
+ const path=series.columnPath?.[0]; if(!path)return series.timeRole;
+ return series.timeRole || dataset.fields.find(field=>field.id===path.dimensionKey)?.semantic?.members?.[String(path.value)]?.timeRole;
+};
+
+/** Resolves split metadata for both legacy and DuckDB-produced chart models. */
+export function resolveActualForecast(dataset: Dataset, config: {actualForecast?: ActualForecastSettings; chartType?: string}, model: ChartModel, splitDate?: string): ResolvedActualForecast | undefined {
+ const settings=config.actualForecast; if(!settings?.enabled || !model.data.length || !model.series.length)return undefined;
+ const timestamps=model.data.map(point=>point.timestamp).filter((value): value is number=>typeof value==='number'&&Number.isFinite(value));
+ if(!timestamps.length)return undefined;
+ let boundary=splitDate?eventTimestamp(splitDate,'day'):null;
+ const contexts: Record<string,Record<string,{timeRole:SeriesTimeRole;statusValues:string[];scenarioValues:string[];versionValues:string[];conflict?:boolean}>>={};
+ for(const point of model.data){ contexts[point.categoryKey]={}; for(const series of model.series){
+  let role: SeriesTimeRole|undefined=roleForMember(dataset,series);
+  if(settings.splitMode==='date' && boundary!=null) role=typeof point.timestamp==='number'&&point.timestamp>=boundary?'forecast':'actual';
+  if(!role && settings.splitMode==='field') role='unknown';
+  contexts[point.categoryKey][series.dataKey]={timeRole:role||'unknown',statusValues:[],scenarioValues:[],versionValues:[]};
+ }}
+ if(settings.splitMode==='series'){
+  const actualTimes=model.data.filter(point=>model.series.some(series=>contexts[point.categoryKey]?.[series.dataKey]?.timeRole==='actual'&&point[series.dataKey]!=null)).map(point=>point.timestamp).filter((value):value is number=>typeof value==='number');
+  boundary=actualTimes.length?Math.max(...actualTimes)+1:Math.min(...timestamps);
+ }
+ if(boundary==null)return undefined;
+ return {enabled:true,splitTimestamp:boundary,splitDate:splitDate||'',settings,contexts};
+}
 
 const segmentKey=(dataKey:string,role:SeriesTimeRole)=>`${dataKey}__${role}`;
 
