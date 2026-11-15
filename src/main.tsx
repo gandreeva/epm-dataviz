@@ -134,6 +134,8 @@ import { validateAndNormalizeCsv } from "./analytical/datasets/formatValidator";
 import { chartAnalyticalQuery, kpiAnalyticalQuery, pivotAnalyticalQuery, queryFilters, resolveTemporalField, rollingAnalyticalQuery, thresholdAnalyticalQuery, waterfallAnalyticalQuery } from "./analytical/query/builders";
 import { chartModelFromQueryResult, kpiModelFromQueryResult, normalizeWaterfallQueryResult, pivotModelFromQueryResults, serializeQueryValue } from "./analytical/adapters";
 import { planPivotQueries } from "./analytical/pivot/PivotQueryPlanner";
+import { planTemporalPivot, temporalPivotHierarchy, temporalPivotModel } from "./analytical/pivot/temporalPivot";
+import { executeTemporalPivot } from "./analytical/pivot/executeTemporalPivot";
 import type { ComposedDatasetDefinition, CsvDatasetDefinition, QueryResult } from "./analytical/query/types";
 import { transportKey } from "./analytical/query/transport";
 import { buildRollingForecast, buildThresholdComparison, buildWaterfall, DEFAULT_ROLLING_SETTINGS } from "./query/specializedCharts";
@@ -634,6 +636,7 @@ function Bucket({
   onMetricConditional,
   onMetricBars,
   onMetricHeatmap,
+  pivotTimeFilter,
 }: {
   id: "viewBy" | "stackBy" | "metrics";
   title: string;
@@ -648,6 +651,7 @@ function Bucket({
   onMetricConditional?: (id: string) => void;
   onMetricBars?: (id: string) => void;
   onMetricHeatmap?: (id: string) => void;
+  pivotTimeFilter?: { fieldId: string; levels: { levelKey: string; levelLabel: string }[]; selectedLevel: string };
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `bucket:${id}` });
   return (
@@ -698,6 +702,7 @@ function Bucket({
               <Trash2 />
             </button>
             </div>
+            {pivotTimeFilter?.fieldId === x.id && <small className="pivot-time-depth" data-ui-id={`mapping.pivot.time-depth.${x.id}`}>До: {pivotTimeFilter.levels.find((level) => level.levelKey === pivotTimeFilter.selectedLevel)?.levelLabel}</small>}
             {x.time?.presentation.mode === "hierarchy" && x.time.hierarchies?.length && onTimePresentation && <div className="mapped-token-time-settings"><BuilderSelector uiId={`mapping.viewby.${x.id}.hierarchy`} label="" value={String(x.time.presentation.activeHierarchyId)} ariaLabel={`Иерархия для ${x.label}`} options={x.time.hierarchies.map((hierarchy) => ({ id: String(hierarchy.hierarchyId), label: hierarchy.displayLabel, meta: `${hierarchy.levels.length} уровней` }))} onChange={(selected) => { const hierarchy = x.time?.hierarchies?.find((item) => String(item.hierarchyId) === selected); onTimePresentation(x.id, { mode: "hierarchy", activeHierarchyId: hierarchy?.hierarchyId ?? null, selectedLevelKey: hierarchy?.defaultLevelKey || hierarchy?.levels[0]?.levelKey || null }); }} /></div>}
           </div>
         ))
@@ -1429,7 +1434,7 @@ function DateField({
           <b>{monthLabel}</b>
           <button {...(buttonId(type === "month" ? "next-year" : "next-month") ? ui(buttonId(type === "month" ? "next-year" : "next-month")!) : {})} type="button" aria-label={t(type === "month" ? "calendar.nextYear" : "calendar.nextMonth")} onClick={() => type === "month" ? shiftYear(1) : shiftView(1)}><ChevronRight /></button>
         </header>
-        {type === "month" ? <div className="localized-calendar-month-grid">{Array.from({ length: 12 }, (_, month) => { const date = new Date(Date.UTC(viewDate.getUTCFullYear(), month, 1)); const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}`; return <button {...(buttonId(`month.${month + 1}`) ? ui(buttonId(`month.${month + 1}`)!) : {})} type="button" className={key === selectedKey ? "selected" : ""} aria-selected={key === selectedKey} onClick={() => changeValue(date)}>{new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" }).format(date)}</button>; })}</div> : <><div className="localized-calendar-weekdays">{Array.from({ length: 7 }, (_, day) => { const date = new Date(Date.UTC(2024, 0, 1 + day)); return <span key={day}>{new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(date)}</span>; })}</div><div className="localized-calendar-day-grid">{dayCells().map((date) => { const key = formatDay(date); const isSelected = key === selectedKey; const isToday = key === todayKey; const inMonth = date.getUTCMonth() === viewDate.getUTCMonth(); const dayId = buttonId(`day.${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`); return <button {...(dayId ? ui(dayId) : {})} type="button" className={`${inMonth ? "" : "outside"} ${isSelected ? "selected" : ""} ${isToday ? "today" : ""}`} aria-selected={isSelected} aria-current={isToday ? "date" : undefined} onClick={() => changeValue(date)}>{date.getUTCDate()}</button>; })}</div></>}
+        {type === "month" ? <div className="localized-calendar-month-grid">{Array.from({ length: 12 }, (_, month) => { const date = new Date(Date.UTC(viewDate.getUTCFullYear(), month, 1)); const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}`; return <button key={key} {...(buttonId(`month.${month + 1}`) ? ui(buttonId(`month.${month + 1}`)!) : {})} type="button" className={key === selectedKey ? "selected" : ""} aria-selected={key === selectedKey} onClick={() => changeValue(date)}>{new Intl.DateTimeFormat(locale, { month: "short", timeZone: "UTC" }).format(date)}</button>; })}</div> : <><div className="localized-calendar-weekdays">{Array.from({ length: 7 }, (_, day) => { const date = new Date(Date.UTC(2024, 0, 1 + day)); return <span key={day}>{new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(date)}</span>; })}</div><div className="localized-calendar-day-grid">{dayCells().map((date) => { const key = formatDay(date); const isSelected = key === selectedKey; const isToday = key === todayKey; const inMonth = date.getUTCMonth() === viewDate.getUTCMonth(); const dayId = buttonId(`day.${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`); return <button key={key} {...(dayId ? ui(dayId) : {})} type="button" className={`${inMonth ? "" : "outside"} ${isSelected ? "selected" : ""} ${isToday ? "today" : ""}`} aria-selected={isSelected} aria-current={isToday ? "date" : undefined} onClick={() => changeValue(date)}>{date.getUTCDate()}</button>; })}</div></>}
         <footer><button type="button" onClick={() => changeValue(new Date(Date.UTC(today.getFullYear(), today.getMonth(), type === "month" ? 1 : today.getDate())))}>{t("calendar.today")}</button><button type="button" onClick={() => setOpen(false)}>{t("calendar.close")}</button></footer>
       </div>}
     </div>
@@ -1934,6 +1939,11 @@ function PivotMappingPanel({ config, dataset, model, page, pageRuntime, onChange
   const [mappingDialog, setMappingDialog] = useState<{ bucket: "viewBy" | "stackBy" | "metrics" | "pageFilters"; anchor: HTMLElement } | null>(null);
   const [visualDialog, setVisualDialog] = useState<{ kind: "conditional" | "bars" | "formatting" | "heatmap"; aggregationId: string } | null>(null);
   const fieldById = (id: string) => dataset.fields.find((field) => field.id === id);
+  const isPageFilter = (id: string) => {
+    const semantic = fieldById(id)?.semantic;
+    const temporalKey = semantic?.dataType === "date" ? semantic.temporalKey || "calendar" : undefined;
+    return page.pageFilters.some((filter) => filter.fieldId === id || Boolean(temporalKey && filter.kind === "date-range" && (filter.temporalKey || "calendar") === temporalKey));
+  };
   const addFields = (bucket: "viewBy" | "stackBy" | "metrics" | "pageFilters", fields: FieldMeta[]) => {
     if (bucket === "pageFilters") {
       fields.forEach((field) => { if (!page.pageFilters.some((item) => item.fieldId === field.id)) onTogglePageFilter(field.id); });
@@ -1961,10 +1971,24 @@ function PivotMappingPanel({ config, dataset, model, page, pageRuntime, onChange
     onChange({ ...config, [key]: next ? [...config[key].filter((rule) => rule.field !== fieldId), { field: fieldId, target: "key", direction: next }] : config[key].filter((rule) => rule.field !== fieldId) });
   };
   const setAggregationFormat = (aggregationId: string, patch: { decimals?: number; scale?: string; unit?: string }) => onChange({ ...config, formatting: { ...config.formatting, [aggregationId]: { ...(config.formatting[aggregationId] || {}), ...patch } }, aggregations: config.aggregations.map((item) => item.id === aggregationId ? { ...item, format: { ...(item.format || {}), ...patch } } : item) });
-  const bucket = (id: "viewBy" | "stackBy" | "metrics", title: string) => <Bucket id={id} title={title} items={id === "viewBy" ? config.rows.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: page.pageFilters.some((filter) => filter.fieldId === fieldId) })) : id === "stackBy" ? config.columns.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: page.pageFilters.some((filter) => filter.fieldId === fieldId) })) : config.aggregations.map((aggregation) => ({ id: aggregation.id, label: aggregation.label, agg: aggregation.operation, formattingStatus: config.formatting[aggregation.id] ? `${config.formatting[aggregation.id].decimals ?? 2} знака` : "Настроить формат", conditionalCount: config.conditionalFormatting.filter((item) => item.target.aggregationId === aggregation.id).reduce((sum, item) => sum + item.rules.length, 0), barsStatus: config.dataBars.some((item) => item.target.aggregationId === aggregation.id) ? (config.dataBars.find((item) => item.target.aggregationId === aggregation.id)?.style === "slim" ? "Slim" : "Normal") : "Не настроено", heatmapStatus: config.heatmapModes.some((item) => item.aggregationId === aggregation.id && item.enabled) ? "Включено · Auto range" : "Не настроено" }))} onRemove={(fieldId) => remove(id, fieldId)} onFilterToggle={id === "metrics" ? undefined : onTogglePageFilter} onAgg={id === "metrics" ? (aggregationId) => onChange({ ...config, aggregations: config.aggregations.map((item) => item.id === aggregationId ? { ...item, operation: item.operation === "SUM" ? "AVG" : "SUM" } : item) }) : undefined} onMetricFormatting={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "formatting", aggregationId }) : undefined} onMetricConditional={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "conditional", aggregationId }) : undefined} onMetricBars={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "bars", aggregationId }) : undefined} onMetricHeatmap={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "heatmap", aggregationId }) : undefined} onAdd={(anchor) => setMappingDialog({ bucket: id, anchor })} />;
+  const temporalFields = [...config.rows, ...config.columns].map(fieldById).filter((field): field is FieldMeta => Boolean(field?.semantic?.dataType === "date" && field.semantic.hierarchies?.length));
+  const activeHierarchy = temporalPivotHierarchy(dataset, config);
+  const bucket = (id: "viewBy" | "stackBy" | "metrics", title: string) => <Bucket id={id} title={title} pivotTimeFilter={id !== "metrics" && activeHierarchy && config[id === "viewBy" ? "rows" : "columns"].includes(activeHierarchy.field.id) ? { fieldId: activeHierarchy.field.id, levels: activeHierarchy.levels, selectedLevel: activeHierarchy.maxLevel.levelKey } : undefined} items={id === "viewBy" ? config.rows.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: isPageFilter(fieldId) })) : id === "stackBy" ? config.columns.map((fieldId) => ({ id: fieldId, label: fieldById(fieldId)?.label || fieldId, isFilter: isPageFilter(fieldId) })) : config.aggregations.map((aggregation) => ({ id: aggregation.id, label: aggregation.label, agg: aggregation.operation, formattingStatus: config.formatting[aggregation.id] ? `${config.formatting[aggregation.id].decimals ?? 2} знака` : "Настроить формат", conditionalCount: config.conditionalFormatting.filter((item) => item.target.aggregationId === aggregation.id).reduce((sum, item) => sum + item.rules.length, 0), barsStatus: config.dataBars.some((item) => item.target.aggregationId === aggregation.id) ? (config.dataBars.find((item) => item.target.aggregationId === aggregation.id)?.style === "slim" ? "Slim" : "Normal") : "Не настроено", heatmapStatus: config.heatmapModes.some((item) => item.aggregationId === aggregation.id && item.enabled) ? "Включено · Auto range" : "Не настроено" }))} onRemove={(fieldId) => remove(id, fieldId)} onFilterToggle={id === "metrics" ? undefined : onTogglePageFilter} onAgg={id === "metrics" ? (aggregationId) => onChange({ ...config, aggregations: config.aggregations.map((item) => item.id === aggregationId ? { ...item, operation: item.operation === "SUM" ? "AVG" : "SUM" } : item) }) : undefined} onMetricFormatting={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "formatting", aggregationId }) : undefined} onMetricConditional={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "conditional", aggregationId }) : undefined} onMetricBars={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "bars", aggregationId }) : undefined} onMetricHeatmap={id === "metrics" ? (aggregationId) => setVisualDialog({ kind: "heatmap", aggregationId }) : undefined} onAdd={(anchor) => setMappingDialog({ bucket: id, anchor })} />;
   return <div className="bucket-list pivot-mapping-panel" data-ui-id="mapping.pivot.settings">
     <section className="settings-dataset-binding"><header><b>Dataset графика</b><small>Источник для mapping и query</small></header><BuilderSelector uiId="mapping.pivot.dataset" label="Источник данных" value={config.datasetId} ariaLabel="Dataset Pivot Table" options={datasetList.map((item) => ({ id: item.id, label: item.label, meta: datasetSemanticMeta(item.id).cube || item.id, count: `${item.fields.length} полей` }))} onChange={(value) => onChange(createDefaultPivotConfig(DATASETS[value as DatasetId]))} /><p>{dataset.description}</p></section>
     {bucket("viewBy", t("buckets.viewBy"))}{bucket("stackBy", t("buckets.stackBy"))}{bucket("metrics", t("buckets.metrics"))}
+    {temporalFields.length > 0 && <section className="pivot-editor-section pivot-time-settings" data-ui-id="mapping.pivot.time-hierarchy">
+      <header><b>Временная иерархия</b><small>Одна иерархия в строках или столбцах</small></header>
+      <label className="pivot-time-field">Дата и иерархия <select data-ui-id="mapping.pivot.time-hierarchy.select" value={activeHierarchy ? `${activeHierarchy.field.id}::${activeHierarchy.hierarchy.hierarchyId}` : ""} onChange={(event) => {
+        const [fieldId, hierarchyId] = event.target.value.split("::");
+        onChange({ ...config, timeHierarchy: fieldId ? { fieldId, hierarchyId } : undefined, expansion: { rows: ["root", "*"], columns: ["root", "*"] } });
+      }}><option value="">Без иерархии</option>{temporalFields.flatMap((field) => (field.semantic?.hierarchies || []).map((hierarchy) => <option key={`${field.id}::${hierarchy.hierarchyId}`} value={`${field.id}::${hierarchy.hierarchyId}`}>{field.label} · {hierarchy.displayLabel}</option>))}</select></label>
+      {activeHierarchy && config.aggregations.map((metric) => <div className="pivot-hierarchy-metric" key={metric.id} data-ui-id={`mapping.pivot.metric.${metric.id}.hierarchy`}>
+        <b>{metric.label}</b>
+        <label>Базовый уровень <select data-ui-id={`mapping.pivot.metric.${metric.id}.base-level`} value={activeHierarchy.levels.some((level) => level.levelKey === metric.hierarchyBaseLevel) ? metric.hierarchyBaseLevel : activeHierarchy.levels.at(-1)?.levelKey} onChange={(event) => onChange({ ...config, aggregations: config.aggregations.map((item) => item.id === metric.id ? { ...item, hierarchyBaseLevel: event.target.value } : item) })}>{activeHierarchy.levels.map((level) => <option key={level.levelKey} value={level.levelKey}>{level.levelLabel}</option>)}</select></label>
+        <label>Агрегация по иерархии <select data-ui-id={`mapping.pivot.metric.${metric.id}.hierarchy-aggregation`} value={metric.hierarchyAggregation || metric.operation} onChange={(event) => onChange({ ...config, aggregations: config.aggregations.map((item) => item.id === metric.id ? { ...item, hierarchyAggregation: event.target.value as HierarchyAggregation } : item) })}>{["SUM", "AVG", "MIN", "MAX", "COUNT", "COUNT_DISTINCT", "FIRST_NON_NULL", "LAST_NON_NULL"].map((operation) => <option key={operation} value={operation}>{operation}</option>)}</select></label>
+      </div>)}
+    </section>}
     <section className="pivot-editor-section" data-ui-id="mapping.pivot.sorting"><header><b>{t("pivot.sorting")}</b><small>Сортировка строк и столбцов</small></header><div className="pivot-sort-grid">{config.rows.map((id) => { const rule = config.rowSorts.find((item) => item.field === id); return <button data-ui-id={`mapping.pivot.sort.rows.${id}`} type="button" key={`row-${id}`} onClick={() => toggleSort(id, "rows")}>{fieldById(id)?.label || id} {rule ? (rule.direction === "asc" ? "↑" : "↓") : "·"}</button>; })}{config.columns.map((id) => { const rule = config.columnSorts.find((item) => item.field === id); return <button data-ui-id={`mapping.pivot.sort.columns.${id}`} type="button" key={`col-${id}`} onClick={() => toggleSort(id, "columns")}>{fieldById(id)?.label || id} {rule ? (rule.direction === "asc" ? "↑" : "↓") : "·"}</button>; })}</div></section>
     <section className="pivot-editor-section" data-ui-id="mapping.pivot.expansion"><header><b>{t("pivot.expansion")}</b><small>Состояние раскрытия и layout строк</small></header><div className="pivot-expansion-actions"><button data-ui-id="mapping.pivot.expansion.expand" type="button" onClick={() => onChange({ ...config, expansion: { rows: ["root", "*"], columns: ["root", "*"] } })}>{t("pivot.expandAll")}</button><button data-ui-id="mapping.pivot.expansion.collapse" type="button" onClick={() => onChange({ ...config, expansion: { rows: ["root"], columns: ["root"] } })}>{t("pivot.collapseAll")}</button><select data-ui-id="mapping.pivot.row-layout" value={config.rowLayout || "compact"} onChange={(event) => onChange({ ...config, rowLayout: event.target.value as "compact" | "tabular" })}><option value="compact">Compact rows</option><option value="tabular">Tabular rows</option></select></div></section>
     <PageFilters page={page} dataset={dataset} state={pageRuntime} onChange={onFilterChange} onReset={onResetFilters} onAddFilter={(anchor) => setMappingDialog({ bucket: "pageFilters", anchor })} onRemoveFilter={onRemovePageFilter} defaults />
@@ -2334,6 +2358,22 @@ function App() {
           const pivotConfig = widget.pivotConfig || createDefaultPivotConfig(DATASETS[widget.datasetId || page.config.datasetId] || DATASETS.credit_lifecycle);
           const pivotDataset = DATASETS[pivotConfig.datasetId] || DATASETS.credit_lifecycle;
           await ensureDataset(pivotDataset.id);
+          const temporalPlan = planTemporalPivot(pivotDataset, pivotConfig, pivotAnalyticalQuery(pivotDataset, pivotConfig, page.pageFilters, pageRuntime));
+          if (temporalPlan && temporalPlan.scopes.length) {
+            try {
+              const results = await executeTemporalPivot(temporalPlan, (scope) => {
+                const key = `${widget.id}:temporal:${scope.key}`;
+                const controller = analyticalControllersRef.current.get(key) || new QueryController(runtime);
+                analyticalControllersRef.current.set(key, controller);
+                return controller;
+              }, () => cancelled);
+              if (!results) return;
+              nextPivots.set(widget.id, temporalPivotModel(temporalPlan, pivotConfig, results));
+            } catch (error) {
+              nextPivots.set(widget.id, { rows: [], columns: [], cells: [], diagnostics: [error instanceof Error ? error.message : String(error)], warnings: [] });
+            }
+            continue;
+          }
           const pivotPlan = planPivotQueries(pivotDataset, pivotConfig, page.pageFilters, pageRuntime);
           const detailQuery = pivotPlan.scopes[0].query;
           const detailControllers = pivotPlan.scopes.map((scope) => {

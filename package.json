@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/uiIds.test.js tests/businessCatalog.test.js && node --experimental-loader ./tests/raw-loader.mjs --import tsx --test tests/queryEngine.test.ts tests/eventAdapter.test.ts tests/eventInteraction.test.ts tests/dashboardConfig.test.ts tests/actualForecast.test.ts tests/smallMultiples.test.ts tests/specializedCharts.test.ts tests/bridgeWaterfall.test.ts",
     "test:ui-ids": "node --test tests/uiIds.test.js",
-    "test:analytical": "node --experimental-loader ./tests/raw-loader.mjs --import tsx --test tests/analyticalQuery.test.ts"
+    "test:analytical": "node --experimental-loader ./tests/raw-loader.mjs --import tsx --test tests/analyticalQuery.test.ts tests/pivotTemporalAggregation.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

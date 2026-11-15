@@ -590,6 +590,8 @@ export interface PivotAggregation {
   id: string;
   measureField: string;
   operation: PivotAggregationOperation;
+  hierarchyAggregation?: HierarchyAggregation;
+  hierarchyBaseLevel?: string;
   label: string;
   format?: { unit?: string; scale?: string; decimals?: number };
   visible: boolean;
@@ -639,6 +641,8 @@ export interface PivotTableConfig {
   datasetId: DatasetId;
   rows: string[];
   columns: string[];
+  /** At most one temporal field may use a hierarchy in a pivot. */
+  timeHierarchy?: { fieldId: string; hierarchyId: string | number; maxLevelKey?: string };
   aggregations: PivotAggregation[];
   rowSorts: PivotSortRule[];
   columnSorts: PivotSortRule[];

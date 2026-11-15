@@ -31,13 +31,39 @@ export interface PivotTableModel {
   diagnostics: string[];
   warnings: string[];
 }
+/** Reorder one axis by insertion; an unchanged or invalid move is a no-op. */
+export function reorderPivotAxis(config: PivotTableConfig, axis: "rows" | "columns", field: string, targetIndex: number): PivotTableConfig {
+  const fields = config[axis], from = fields.indexOf(field);
+  if (from < 0 || !Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= fields.length || targetIndex === from) return config;
+  const reordered = [...fields];
+  reordered.splice(from, 1);
+  reordered.splice(targetIndex, 0, field);
+  return { ...config, [axis]: reordered, expansion: { ...config.expansion, [axis]: ["root"] } };
+}
+/** Persist a tree toggle without losing the expansion state of sibling branches. */
+export function togglePivotExpansion(current: string[], nodes: PivotAxisNode[], node: PivotAxisNode): string[] {
+  const separator = "\u001f";
+  if (node.id === "__all__") return node.expanded ? [] : ["root"];
+  const descendant = (candidate: string) => candidate === node.id || candidate.startsWith(`${node.id}${separator}`);
+  if (node.expanded) {
+    const next = current.includes("*")
+      ? ["root", ...nodes.filter((candidate) => candidate.id !== "__all__" && candidate.hasChildren && !descendant(candidate.id)).map((candidate) => candidate.id)]
+      : current.filter((item) => !descendant(item));
+    return [...new Set(next)];
+  }
+  const ancestors = node.path.map((_, index) => node.path.slice(0, index + 1).join(separator));
+  return [...new Set(["root", ...current.filter((item) => item !== "*"), ...ancestors])];
+}
 export function pivotHeatmapRange(model: PivotTableModel, aggregationId: string) {
   const detailRows = model.rows.filter((row) => row.nodeType === "detail");
   const rows = detailRows.length ? detailRows : model.rows;
   const rowIds = new Set(rows.map((row) => row.id));
-  const values = model.cells.filter((cell) => cell.aggregationId === aggregationId && rowIds.has(cell.rowId)).map((cell) => cell.value).filter((value): value is number => value != null && Number.isFinite(value));
-  if (!values.length) return { min: 0, max: 1 };
-  const min = Math.min(...values), max = Math.max(...values);
+  let min = Infinity, max = -Infinity;
+  for (const cell of model.cells) {
+    if (cell.aggregationId !== aggregationId || !rowIds.has(cell.rowId) || cell.value == null || !Number.isFinite(cell.value)) continue;
+    min = Math.min(min, cell.value); max = Math.max(max, cell.value);
+  }
+  if (min === Infinity) return { min: 0, max: 1 };
   return { min, max: min === max ? min + 1 : max };
 }
 export const createDefaultPivotConfig = (dataset: Dataset): PivotTableConfig => {
